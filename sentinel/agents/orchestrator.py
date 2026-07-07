@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+try:
+    from agents import Runner
+except ImportError:  # pragma: no cover
+    Runner = None
+
+from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
+from sentinel.agents.common import build_sdk_agent
+from sentinel.agents.senior_reviewer import build_senior_reviewer, review_case as senior_review
+from sentinel.config import DEFAULT_DB_PATH
+from sentinel.guardrails import check_tier1_guardrail
+from sentinel.models import BatchResult, Case, CaseResult, Verdict
+from sentinel.tools.audit_log import init_db, write_audit
+from sentinel.tools.hash_match import hash_match
+from sentinel.tools.media_utils import detect_asset_type, quarantine
+from sentinel.tools.policy_retrieval import get_clause_for_category
+from sentinel.tools.ticketing import create_human_ticket
+
+
+def build_orchestrator_agent():
+    handoffs = [
+        image_agent.build_image_agent(),
+        audio_agent.build_audio_agent(),
+        video_agent.build_video_agent(),
+        text_agent.build_text_agent(),
+        build_senior_reviewer(),
+    ]
+    return build_sdk_agent(
+        "Orchestrator",
+        "Detect asset type and hand off to the matching synthetic moderation specialist.",
+        handoffs=[agent for agent in handoffs if agent is not None],
+    )
+
+
+def _dispatch(case: Case, db_path: str | Path, trace: list[str]) -> Verdict:
+    asset_type = detect_asset_type(case.asset_path, {"asset_type": case.asset_type})
+    trace.append(f"orchestrator.detect_asset_type:{asset_type}")
+    if case.metadata.get("analysis_mode") == "production":
+        trace.append("production_analysis:enabled")
+    if asset_type == "image":
+        trace.append("handoff:image-agent")
+        return image_agent.review_case(case, db_path)
+    if asset_type == "audio":
+        trace.append("handoff:audio-agent")
+        return audio_agent.review_case(case, db_path)
+    if asset_type == "video":
+        trace.append("handoff:video-agent")
+        return video_agent.review_case(case, db_path)
+    trace.append("handoff:text-agent")
+    return text_agent.review_case(case, db_path)
+
+
+def _warning(verdict: Verdict) -> str | None:
+    if verdict.decision != "reject":
+        return None
+    return (
+        f"Upload rejected for {verdict.category}: violates {verdict.policy_clause}. "
+        f"Rationale: {verdict.rationale}"
+    )
+
+
+def _human_only_verdict(case: Case, source_verdict: Verdict) -> Verdict:
+    clause = get_clause_for_category(source_verdict.category)
+    if case.metadata.get("analysis_mode") == "production":
+        rationale = "Tier-1 signal detected; automated decision bypassed and routed to human review."
+    else:
+        rationale = "Tier-1 synthetic stand-in routed to human queue; automated decision bypassed."
+    return Verdict(
+        case_id=case.id,
+        decision="ambiguous",
+        severity_tier=1,
+        category=source_verdict.category,
+        policy_clause=clause.citation,
+        confidence=1.0,
+        rationale=rationale,
+        reviewer="human",
+    )
+
+
+def _write_case_audit(case: Case, verdict: Verdict, db_path: str | Path):
+    return write_audit(
+        verdict,
+        db_path,
+        api_key_id=case.metadata.get("api_key_id"),
+        tenant_name=case.metadata.get("tenant_name"),
+    )
+
+
+def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
+    init_db(db_path)
+    trace: list[str] = [f"ingest:{case.id}"]
+    specialist_verdict = _dispatch(case, db_path, trace)
+    trace.append(f"specialist.verdict:{specialist_verdict.decision}:{specialist_verdict.policy_clause}")
+
+    guardrail = check_tier1_guardrail(specialist_verdict)
+    if guardrail.triggered:
+        trace.append("guardrail.tier1.triggered")
+        trace.append(f"hash_match.flag:{hash_match(case)}")
+        quarantined = quarantine(case)
+        ticket = create_human_ticket(case, 1, specialist_verdict.category, db_path)
+        final_verdict = _human_only_verdict(case, specialist_verdict)
+        _write_case_audit(case, final_verdict, db_path)
+        trace.append("human_ticket.created")
+        trace.append("quarantine.completed")
+        return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
+
+    if specialist_verdict.decision == "ambiguous":
+        trace.append("handoff:senior-reviewer")
+        final_verdict = senior_review(case, specialist_verdict, db_path)
+        trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
+        if final_verdict.decision == "ambiguous":
+            ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
+            quarantined = quarantine(case)
+            _write_case_audit(case, final_verdict, db_path)
+            return CaseResult(
+                case=case,
+                verdict=final_verdict,
+                trace=trace,
+                ticket=ticket,
+                quarantined=quarantined,
+                warning_message=_warning(final_verdict),
+            )
+        _write_case_audit(case, final_verdict, db_path)
+        return CaseResult(case=case, verdict=final_verdict, trace=trace, warning_message=_warning(final_verdict))
+
+    _write_case_audit(case, specialist_verdict, db_path)
+    return CaseResult(case=case, verdict=specialist_verdict, trace=trace, warning_message=_warning(specialist_verdict))
+
+
+def run_batch(cases: list[Case], db_path: str | Path = DEFAULT_DB_PATH) -> BatchResult:
+    results = [run_case(case, db_path=db_path) for case in cases]
+    eligible = [result for result in results if result.verdict.severity_tier != 1]
+    escalated = [
+        result
+        for result in eligible
+        if result.verdict.reviewer in {"senior", "human"} or result.ticket is not None
+    ]
+    escalation_rate = len(escalated) / len(eligible) if eligible else 0.0
+    return BatchResult(results=results, escalation_rate=escalation_rate)

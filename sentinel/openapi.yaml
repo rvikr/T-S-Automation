@@ -1,0 +1,486 @@
+openapi: 3.1.0
+info:
+  title: Sentinel Autonomous Moderation API
+  version: 1.0.0
+  description: Vendor-neutral moderation API for autonomous enforcement and integration with Jira, ServiceNow, Zendesk, or in-house ticketing tools.
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: API health check.
+      responses:
+        "200":
+          description: API is available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /admin/api-keys:
+    post:
+      operationId: createApiKey
+      summary: Generate a tenant/project API key.
+      security:
+        - AdminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+      responses:
+        "201":
+          description: API key created. The raw api_key is returned only once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApiKeyResponse"
+        "401":
+          description: Missing or invalid admin token.
+        "503":
+          description: Admin token is not configured.
+    get:
+      operationId: listApiKeys
+      summary: List API key metadata without raw keys or hashes.
+      security:
+        - AdminBearerAuth: []
+      responses:
+        "200":
+          description: API key metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - count
+                  - keys
+                properties:
+                  count:
+                    type: integer
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiKeyRecord"
+        "401":
+          description: Missing or invalid admin token.
+  /admin/api-keys/{key_id}/revoke:
+    post:
+      operationId: revokeApiKey
+      summary: Revoke an API key.
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: API key revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyRecord"
+        "401":
+          description: Missing or invalid admin token.
+        "404":
+          description: Unknown API key.
+  /moderation/cases:
+    post:
+      operationId: moderateCase
+      summary: Moderate a content case and return an autonomous enforcement decision.
+      security:
+        - ApiKeyBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModerationRequest"
+      responses:
+        "201":
+          description: Moderation completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModerationResponse"
+        "400":
+          description: Invalid request payload.
+        "401":
+          description: Missing, invalid, or revoked API key.
+  /moderation/logs:
+    get:
+      operationId: listModerationLogs
+      summary: List moderation decisions with escalation status and details.
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: escalated
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, return only escalated cases; when false, return only non-escalated cases.
+      responses:
+        "200":
+          description: Moderation logs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - count
+                  - logs
+                properties:
+                  count:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModerationLog"
+        "401":
+          description: Missing, invalid, or revoked API key.
+  /moderation/logs/{case_id}:
+    get:
+      operationId: getCaseLogs
+      summary: List moderation logs for one case.
+      security:
+        - ApiKeyBearerAuth: []
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Logs for the requested case.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - count
+                  - logs
+                properties:
+                  count:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModerationLog"
+        "404":
+          description: No logs found for the requested case.
+components:
+  securitySchemes:
+    AdminBearerAuth:
+      type: http
+      scheme: bearer
+      description: Admin bootstrap token from SENTINEL_ADMIN_TOKEN.
+    ApiKeyBearerAuth:
+      type: http
+      scheme: bearer
+      description: Tenant API key generated by POST /admin/api-keys.
+  schemas:
+    CreateApiKeyRequest:
+      type: object
+      required:
+        - tenant_name
+        - project_name
+        - environment
+      properties:
+        tenant_name:
+          type: string
+        project_name:
+          type: string
+        environment:
+          type: string
+          enum:
+            - test
+            - live
+          default: test
+    CreateApiKeyResponse:
+      type: object
+      required:
+        - api_key
+        - key_id
+        - tenant_name
+        - project_name
+        - environment
+        - key_prefix
+        - status
+        - created_at
+      properties:
+        api_key:
+          type: string
+          description: Raw API key returned only once.
+        key_id:
+          type: string
+        tenant_name:
+          type: string
+        project_name:
+          type: string
+        environment:
+          type: string
+          enum:
+            - test
+            - live
+        key_prefix:
+          type: string
+          enum:
+            - sent_test
+            - sent_live
+        status:
+          type: string
+          enum:
+            - active
+        created_at:
+          type: string
+          format: date-time
+    ApiKeyRecord:
+      type: object
+      required:
+        - key_id
+        - tenant_name
+        - project_name
+        - environment
+        - key_prefix
+        - status
+        - created_at
+      properties:
+        key_id:
+          type: string
+        tenant_name:
+          type: string
+        project_name:
+          type: string
+        environment:
+          type: string
+          enum:
+            - test
+            - live
+        key_prefix:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - revoked
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    ModerationRequest:
+      type: object
+      properties:
+        case_id:
+          type: string
+          description: External case ID. Generated when omitted.
+        asset_type:
+          type: string
+          enum:
+            - text
+            - image
+            - audio
+            - video
+          default: text
+        content:
+          type: string
+          description: UTF-8 text payload. For media, use content_base64.
+        content_base64:
+          type: string
+          description: Base64-encoded binary payload for images, audio, or video.
+        filename:
+          type: string
+        content_type:
+          type: string
+        source_system:
+          type: string
+          description: Origin system such as jira, servicenow, zendesk, or platform name.
+        external_reference:
+          type: string
+          description: Issue, ticket, user-content, or platform reference ID.
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - asset_type
+    ModerationResponse:
+      type: object
+      required:
+        - case_id
+        - asset_type
+        - verdict
+        - enforcement
+        - integration
+      properties:
+        case_id:
+          type: string
+        asset_type:
+          type: string
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        warning_message:
+          type:
+            - string
+            - "null"
+        quarantined:
+          type: boolean
+        trace:
+          type: array
+          items:
+            type: string
+        enforcement:
+          $ref: "#/components/schemas/Enforcement"
+        integration:
+          $ref: "#/components/schemas/TicketingIntegration"
+    Verdict:
+      type: object
+      required:
+        - case_id
+        - decision
+        - severity_tier
+        - category
+        - policy_clause
+        - confidence
+        - rationale
+        - reviewer
+      properties:
+        case_id:
+          type: string
+        decision:
+          type: string
+          enum:
+            - allow
+            - reject
+            - ambiguous
+        severity_tier:
+          type: integer
+        category:
+          type: string
+        policy_clause:
+          type: string
+        confidence:
+          type: number
+        rationale:
+          type: string
+        reviewer:
+          type: string
+    Enforcement:
+      type: object
+      required:
+        - mode
+        - action
+        - should_block
+        - escalation_triggered
+      properties:
+        mode:
+          type: string
+          enum:
+            - autonomous
+        action:
+          type: string
+          enum:
+            - allow
+            - reject
+            - escalate
+        should_block:
+          type: boolean
+        escalation_triggered:
+          type: boolean
+        escalation:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+    TicketingIntegration:
+      type: object
+      required:
+        - ticketing_systems
+        - ticketing_payload
+      properties:
+        ticketing_systems:
+          type: array
+          items:
+            type: string
+            enum:
+              - jira
+              - servicenow
+              - zendesk
+              - webhook
+        ticketing_payload:
+          $ref: "#/components/schemas/TicketingPayload"
+    TicketingPayload:
+      type: object
+      required:
+        - summary
+        - description
+        - priority
+        - labels
+        - fields
+      properties:
+        summary:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum:
+            - normal
+            - high
+            - critical
+        labels:
+          type: array
+          items:
+            type: string
+        fields:
+          type: object
+          additionalProperties: true
+    ModerationLog:
+      type: object
+      required:
+        - id
+        - case_id
+        - decision
+        - clause
+        - reviewer
+        - timestamp
+        - rationale
+        - escalation_triggered
+        - escalation_type
+        - escalation_details
+      properties:
+        id:
+          type: integer
+        case_id:
+          type: string
+        decision:
+          type: string
+        clause:
+          type: string
+        reviewer:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        rationale:
+          type: string
+        escalation_triggered:
+          type: boolean
+        escalation_type:
+          type:
+            - string
+            - "null"
+        escalation_details:
+          type: object
+          additionalProperties: true

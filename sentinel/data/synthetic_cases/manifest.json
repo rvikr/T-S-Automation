@@ -1,0 +1,146 @@
+[
+  {
+    "id": "img-benign-001",
+    "asset_type": "image",
+    "asset_file": "img-benign-001.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: friendly avatar scene"
+  },
+  {
+    "id": "img-gore-001",
+    "asset_type": "image",
+    "asset_file": "img-gore-001.synthetic",
+    "category": "Violent Content & Gore",
+    "expected_decision": "reject",
+    "label": "synthetic placeholder label for gore category, no depiction"
+  },
+  {
+    "id": "txt-sexual-001",
+    "asset_type": "text",
+    "asset_file": "txt-sexual-001.synthetic",
+    "category": "Romantic/Sexual Content",
+    "expected_decision": "reject",
+    "label": "synthetic placeholder label for sexual content category"
+  },
+  {
+    "id": "txt-harass-amb-001",
+    "asset_type": "text",
+    "asset_file": "txt-harass-amb-001.synthetic",
+    "category": "Harassment & Discrimination",
+    "expected_decision": "ambiguous",
+    "label": "synthetic borderline insult between friends"
+  },
+  {
+    "id": "txt-spam-001",
+    "asset_type": "text",
+    "asset_file": "txt-spam-001.synthetic",
+    "category": "Spam",
+    "expected_decision": "reject",
+    "label": "synthetic repeated promotional links"
+  },
+  {
+    "id": "txt-scam-001",
+    "asset_type": "text",
+    "asset_file": "txt-scam-001.synthetic",
+    "category": "Cheating & Scams",
+    "expected_decision": "reject",
+    "label": "synthetic currency doubling scam claim"
+  },
+  {
+    "id": "txt-pii-001",
+    "asset_type": "text",
+    "asset_file": "txt-pii-001.synthetic",
+    "category": "Sharing Personal Info",
+    "expected_decision": "reject",
+    "label": "synthetic placeholder says private contact info would be shared"
+  },
+  {
+    "id": "txt-offplatform-amb-001",
+    "asset_type": "text",
+    "asset_file": "txt-offplatform-amb-001.synthetic",
+    "category": "Off-Platform Directing",
+    "expected_decision": "ambiguous",
+    "label": "synthetic unclear invitation to move off platform"
+  },
+  {
+    "id": "aud-profanity-001",
+    "asset_type": "audio",
+    "asset_file": "aud-profanity-001.synthetic",
+    "category": "Profanity",
+    "expected_decision": "reject",
+    "label": "synthetic transcript label for profanity"
+  },
+  {
+    "id": "aud-benign-001",
+    "asset_type": "audio",
+    "asset_file": "aud-benign-001.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: music loop"
+  },
+  {
+    "id": "vid-gore-001",
+    "asset_type": "video",
+    "asset_file": "vid-gore-001.synthetic",
+    "category": "Violent Content & Gore",
+    "expected_decision": "reject",
+    "label": "synthetic video label for gore category, no depiction"
+  },
+  {
+    "id": "vid-benign-001",
+    "asset_type": "video",
+    "asset_file": "vid-benign-001.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: platformer gameplay"
+  },
+  {
+    "id": "tier1-child-standin-001",
+    "asset_type": "image",
+    "asset_file": "tier1-child-standin-001.synthetic",
+    "category": "Child Exploitation",
+    "expected_decision": "allow",
+    "label": "synthetic tier-1 stand-in label only for child safety routing"
+  },
+  {
+    "id": "tier1-terror-standin-001",
+    "asset_type": "video",
+    "asset_file": "tier1-terror-standin-001.synthetic",
+    "category": "Terrorism & Violent Extremism",
+    "expected_decision": "reject",
+    "label": "synthetic tier-1 stand-in label only for violent extremism routing"
+  },
+  {
+    "id": "txt-selfharm-amb-001",
+    "asset_type": "text",
+    "asset_file": "txt-selfharm-amb-001.synthetic",
+    "category": "Suicide/Self-Injury",
+    "expected_decision": "ambiguous",
+    "label": "synthetic ambiguous self-injury support phrase"
+  },
+  {
+    "id": "txt-regulated-001",
+    "asset_type": "text",
+    "asset_file": "txt-regulated-001.synthetic",
+    "category": "Illegal & Regulated Goods",
+    "expected_decision": "reject",
+    "label": "synthetic regulated goods solicitation label"
+  },
+  {
+    "id": "img-ip-001",
+    "asset_type": "image",
+    "asset_file": "img-ip-001.synthetic",
+    "category": "IP Violations",
+    "expected_decision": "reject",
+    "label": "synthetic unauthorized protected IP label"
+  },
+  {
+    "id": "txt-sensitive-amb-001",
+    "asset_type": "text",
+    "asset_file": "txt-sensitive-amb-001.synthetic",
+    "category": "Sensitive Events",
+    "expected_decision": "ambiguous",
+    "label": "synthetic sensitive event reference with unclear context"
+  }
+]

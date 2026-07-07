@@ -1,0 +1,11 @@
+.env
+.env.local
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+sentinel/db/*.sqlite
+sentinel/db/chroma/
+sentinel/data/uploads/
+sentinel/data/quarantine/
+sentinel/eval_runs/
