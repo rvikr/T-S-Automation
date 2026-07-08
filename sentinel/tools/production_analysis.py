@@ -30,9 +30,15 @@ def production_review(case: Case, reviewer: str, db_path) -> Verdict:
         decision = "ambiguous"
         rationale = "Tier-1 signal detected; automated decision bypassed and routed to human review."
         confidence = max(assessment.confidence, 0.95)
-    elif category == "No Violation" or assessment.decision == "allow":
+    elif assessment.decision == "allow":
         decision = "allow"
         rationale = assessment.rationale or "No policy violation detected in the uploaded asset."
+        confidence = assessment.confidence
+    elif category == "No Violation":
+        # Non-allow verdict without a category means the content could not be
+        # analyzed (empty evidence, runtime failure): fail closed to review.
+        decision = "ambiguous"
+        rationale = assessment.rationale or "Content could not be reliably analyzed; routed to escalated review."
         confidence = assessment.confidence
     elif clause.tier == 2 and not senior_reviewed:
         decision = "ambiguous"
