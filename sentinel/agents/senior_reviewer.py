@@ -23,6 +23,7 @@ def _agent_runtime_ready() -> bool:
 
 def _production_senior_review(case: Case, initial_verdict: Verdict, db_path: str | Path) -> Verdict:
     from sentinel.agents.runtime import run_senior_case
+    from sentinel.tools.production_analysis import _record_agent_metadata
 
     try:
         assessment = run_senior_case(case, initial_verdict, db_path)
@@ -40,13 +41,7 @@ def _production_senior_review(case: Case, initial_verdict: Verdict, db_path: str
 
     category = assessment.category if assessment.category in POLICY_CLAUSES else initial_verdict.category
     clause = get_clause_for_category(category)
-    events = list(getattr(assessment, "agent_events", []) or [])
-    if events:
-        case.metadata.setdefault("agent_events", []).extend(events)
-    citations = list(getattr(assessment, "cited_clauses", []) or [])
-    if citations:
-        existing = case.metadata.setdefault("cited_clauses", [])
-        existing.extend(citation for citation in citations if citation not in existing)
+    _record_agent_metadata(case, assessment)
 
     if clause.tier == 1 or category in TIER1_CATEGORIES:
         decision = "ambiguous"

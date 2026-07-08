@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 try:
@@ -108,18 +109,25 @@ def _tracing_enabled(case: Case) -> bool:
 def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
     init_db(db_path)
     trace: list[str] = [f"ingest:{case.id}"]
-    if _tracing_enabled(case):
-        trace_id = gen_trace_id()
-        case.metadata["openai_trace_id"] = trace_id
-        trace.append(f"trace.openai:{trace_id}")
-        with sdk_trace(
-            "Sentinel moderation",
-            trace_id=trace_id,
-            group_id=case.id,
-            metadata={"case_id": case.id, "modality": case.asset_type},
-        ):
-            return _run_case_inner(case, db_path, trace)
-    return _run_case_inner(case, db_path, trace)
+    started = time.perf_counter()
+    try:
+        if _tracing_enabled(case):
+            trace_id = gen_trace_id()
+            case.metadata["openai_trace_id"] = trace_id
+            trace.append(f"trace.openai:{trace_id}")
+            with sdk_trace(
+                "Sentinel moderation",
+                trace_id=trace_id,
+                group_id=case.id,
+                metadata={"case_id": case.id, "modality": case.asset_type},
+            ):
+                return _run_case_inner(case, db_path, trace)
+        return _run_case_inner(case, db_path, trace)
+    finally:
+        # `trace` is the same list the CaseResult holds, so this lands in the result.
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        case.metadata["latency_ms"] = latency_ms
+        trace.append(f"latency:{latency_ms}ms")
 
 
 def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseResult:

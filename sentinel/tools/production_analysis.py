@@ -72,6 +72,15 @@ def _record_agent_metadata(case: Case, assessment: ProductionAssessment) -> None
     if citations:
         existing = case.metadata.setdefault("cited_clauses", [])
         existing.extend(citation for citation in citations if citation not in existing)
+    if getattr(assessment, "usage_total_tokens", 0):
+        # Accumulate across runs: the senior pass adds to the specialist pass.
+        usage = case.metadata.setdefault(
+            "token_usage", {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        )
+        usage["requests"] += int(assessment.usage_requests or 0)
+        usage["input_tokens"] += int(assessment.usage_input_tokens or 0)
+        usage["output_tokens"] += int(assessment.usage_output_tokens or 0)
+        usage["total_tokens"] += int(assessment.usage_total_tokens or 0)
 
 
 def _agents_sdk_available() -> bool:

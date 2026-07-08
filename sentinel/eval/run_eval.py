@@ -49,6 +49,8 @@ class CaseScore:
     ticket_id: str | None
     quarantined: bool
     correct: bool
+    latency_ms: int = 0
+    total_tokens: int = 0
 
 
 def expected_outcome(case: Case) -> str:
@@ -81,6 +83,9 @@ def score_case(case: Case, result: CaseResult) -> CaseScore:
         ticket_id=result.ticket.id if result.ticket else None,
         quarantined=result.quarantined,
         correct=expected == predicted,
+        # result.case is the case that actually ran (a label-free copy in live mode).
+        latency_ms=int(result.case.metadata.get("latency_ms", 0) or 0),
+        total_tokens=int((result.case.metadata.get("token_usage") or {}).get("total_tokens", 0) or 0),
     )
 
 
@@ -139,9 +144,42 @@ def compute_metrics(scores: list[CaseScore]) -> dict:
         "tier1_recall": round(len(tier1_handled) / len(tier1), 4) if tier1 else None,
         "benign_false_positive_rate": round(len(benign_rejected) / len(benign), 4) if benign else None,
         "escalation_rate": round(len(escalated) / len(scores), 4) if scores else None,
+        "latency_ms": _latency_stats(scores),
+        "total_tokens": sum(s.total_tokens for s in scores),
         "per_class": per_class,
         "confusion_matrix": confusion,
+        "per_modality": _per_modality(scores),
     }
+
+
+def _latency_stats(scores: list[CaseScore]) -> dict | None:
+    if not scores:
+        return None
+    latencies = sorted(s.latency_ms for s in scores)
+    p95_index = min(len(latencies) - 1, max(0, round(0.95 * len(latencies)) - 1))
+    return {
+        "mean": round(sum(latencies) / len(latencies)),
+        "p95": latencies[p95_index],
+    }
+
+
+def _per_modality(scores: list[CaseScore]) -> dict:
+    by_modality: dict[str, list[CaseScore]] = defaultdict(list)
+    for score in scores:
+        by_modality[score.asset_type].append(score)
+    per_modality: dict[str, dict] = {}
+    for asset_type in sorted(by_modality):
+        group = by_modality[asset_type]
+        stats = _latency_stats(group) or {}
+        per_modality[asset_type] = {
+            "cases": len(group),
+            "accuracy": round(sum(s.correct for s in group) / len(group), 4),
+            "escalation_rate": round(sum(1 for s in group if s.predicted_outcome == "escalate") / len(group), 4),
+            "mean_latency_ms": stats.get("mean", 0),
+            "p95_latency_ms": stats.get("p95", 0),
+            "mean_tokens": round(sum(s.total_tokens for s in group) / len(group)),
+        }
+    return per_modality
 
 
 def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode: str) -> Path:
@@ -167,6 +205,14 @@ def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode:
         f"# Sentinel golden-set evaluation ({mode})",
         "",
         f"Generated: {timestamp} — {metrics['cases']} cases",
+    ]
+    if mode == "live":
+        lines += [
+            "",
+            "> Live mode scores the golden set's text cases (the image/audio/video entries are",
+            "> labeled text placeholders); pass `--live-all` to force every modality through.",
+        ]
+    lines += [
         "",
         "## Headline metrics",
         "",
@@ -174,6 +220,13 @@ def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode:
         f"- Tier-1 recall (must be 1.0): **{metrics['tier1_recall']:.1%}**" if metrics["tier1_recall"] is not None else "- Tier-1 recall: n/a",
         f"- Benign false-positive rate: **{metrics['benign_false_positive_rate']:.1%}**" if metrics["benign_false_positive_rate"] is not None else "- Benign false-positive rate: n/a",
         f"- Escalation rate: **{metrics['escalation_rate']:.1%}**",
+    ]
+    latency = metrics.get("latency_ms")
+    if latency:
+        lines.append(f"- Latency per case: mean **{latency['mean']} ms**, p95 **{latency['p95']} ms**")
+    if metrics.get("total_tokens"):
+        lines.append(f"- Total tokens: **{metrics['total_tokens']:,}**")
+    lines += [
         "",
         "## Per-outcome precision / recall / F1",
         "",
@@ -184,6 +237,21 @@ def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode:
         row = metrics["per_class"][outcome]
         fmt = lambda v: f"{v:.3f}" if isinstance(v, float) else "n/a"
         lines.append(f"| {outcome} | {row['support']} | {fmt(row['precision'])} | {fmt(row['recall'])} | {fmt(row['f1'])} |")
+
+    per_modality = metrics.get("per_modality") or {}
+    if per_modality:
+        lines += [
+            "",
+            "## Per-modality",
+            "",
+            "| Modality | Cases | Accuracy | Escalation rate | Mean latency (ms) | p95 latency (ms) | Mean tokens |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for asset_type, row in per_modality.items():
+            lines.append(
+                f"| {asset_type} | {row['cases']} | {row['accuracy']:.1%} | {row['escalation_rate']:.1%} "
+                f"| {row['mean_latency_ms']} | {row['p95_latency_ms']} | {row['mean_tokens']} |"
+            )
 
     lines += ["", "## Confusion matrix (rows = expected, columns = predicted)", ""]
     lines.append("| expected \\ predicted | " + " | ".join(OUTCOMES) + " |")

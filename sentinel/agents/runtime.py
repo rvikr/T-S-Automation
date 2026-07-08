@@ -263,7 +263,21 @@ def _tier1_tripwire_assessment(exc: OutputGuardrailTripwireTriggered, events: li
     )
 
 
-def _assessment_from_output(output: AssessmentOutput, chain: list[str], events: list[str]) -> ProductionAssessment:
+def _usage_fields(result: Any) -> dict[str, int]:
+    usage = getattr(getattr(result, "context_wrapper", None), "usage", None)
+    if usage is None:
+        return {}
+    return {
+        "usage_requests": int(getattr(usage, "requests", 0) or 0),
+        "usage_input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+        "usage_output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        "usage_total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+    }
+
+
+def _assessment_from_output(
+    output: AssessmentOutput, chain: list[str], events: list[str], usage: dict[str, int] | None = None
+) -> ProductionAssessment:
     category = output.category if output.category in POLICY_CLAUSES else "No Violation"
     return ProductionAssessment(
         decision=output.decision,
@@ -274,6 +288,7 @@ def _assessment_from_output(output: AssessmentOutput, chain: list[str], events: 
         reviewer_chain=chain,
         agent_events=events,
         cited_clauses=list(output.cited_clauses),
+        **(usage or {}),
     )
 
 
@@ -295,9 +310,9 @@ def run_specialist_case(case: Case, db_path: str | Path | None = None, client: A
     try:
         result = Runner.run_sync(specialist, input_items, context=context, max_turns=MAX_AGENT_TURNS)
     except OutputGuardrailTripwireTriggered as exc:
-        return _tier1_tripwire_assessment(exc, events)
+        return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
-    return _assessment_from_output(result.final_output, _reviewer_chain(result), events)
+    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, _usage_fields(result))
 
 
 def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | None = None) -> ProductionAssessment:
@@ -332,6 +347,6 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
     try:
         result = Runner.run_sync(senior, input_items + [escalation_note], context=context, max_turns=MAX_AGENT_TURNS)
     except OutputGuardrailTripwireTriggered as exc:
-        return _tier1_tripwire_assessment(exc, events)
+        return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
-    return _assessment_from_output(result.final_output, _reviewer_chain(result), events)
+    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, _usage_fields(result))

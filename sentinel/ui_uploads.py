@@ -183,6 +183,10 @@ def describe_trace_event(event: str) -> tuple[str, str]:
         return "🔒", "Content quarantined"
     if event.startswith("agent.agent_runtime.error:"):
         return "⚠️", f"Agent runtime error — failed closed to review ({event.rsplit(':', 1)[1]})"
+    if event.startswith("latency:"):
+        return "⏱️", f"End-to-end latency: {event.split(':', 1)[1]}"
+    if event == "agent.usage:unavailable:guardrail-halt":
+        return "⏱️", "Token usage unavailable: the guardrail halted the run before completion"
     return "•", event
 
 

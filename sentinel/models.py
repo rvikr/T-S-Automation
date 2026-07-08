@@ -37,6 +37,10 @@ class ProductionAssessment:
     reviewer_chain: list[str] = field(default_factory=list)
     agent_events: list[str] = field(default_factory=list)
     cited_clauses: list[str] = field(default_factory=list)
+    usage_requests: int = 0
+    usage_input_tokens: int = 0
+    usage_output_tokens: int = 0
+    usage_total_tokens: int = 0
 
 
 @dataclass(frozen=True)

@@ -64,6 +64,18 @@ def render_verdict_card(result) -> None:
     columns[2].metric("Confidence", f"{verdict.confidence:.0%}")
     columns[3].metric("Reviewer", verdict.reviewer)
 
+    latency_ms = result.case.metadata.get("latency_ms")
+    usage = result.case.metadata.get("token_usage") or {}
+    if latency_ms is not None or usage:
+        perf = st.columns(4)
+        if latency_ms is not None:
+            label = f"{latency_ms / 1000:.1f} s" if latency_ms >= 1000 else f"{latency_ms} ms"
+            perf[0].metric("Latency", label)
+        if usage:
+            perf[1].metric("Tokens (total)", f"{usage.get('total_tokens', 0):,}")
+            perf[2].metric("Tokens in / out", f"{usage.get('input_tokens', 0):,} / {usage.get('output_tokens', 0):,}")
+            perf[3].metric("LLM requests", usage.get("requests", 0))
+
     clause = get_clause_for_category(verdict.category)
     st.markdown(f"**Policy clause:** `{verdict.policy_clause}`")
     st.caption(clause.summary)
@@ -160,6 +172,22 @@ def render_metrics_page() -> None:
     fpr = metrics.get("benign_false_positive_rate")
     columns[2].metric("Benign FPR", f"{fpr:.1%}" if fpr is not None else "n/a")
     columns[3].metric("Escalation rate", f"{metrics['escalation_rate']:.1%}")
+
+    latency = metrics.get("latency_ms")
+    if latency:
+        tokens = metrics.get("total_tokens", 0)
+        st.caption(
+            f"⏱️ Latency per case: mean {latency['mean']} ms, p95 {latency['p95']} ms"
+            + (f" · 🔢 total tokens {tokens:,}" if tokens else "")
+        )
+
+    per_modality = metrics.get("per_modality")
+    if per_modality:
+        st.markdown("**Per-modality**")
+        st.dataframe(
+            [{"modality": modality, **row} for modality, row in per_modality.items()],
+            width="stretch",
+        )
 
     st.markdown("**Per-outcome precision / recall / F1**")
     per_class = metrics["per_class"]
