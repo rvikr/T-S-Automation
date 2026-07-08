@@ -30,9 +30,15 @@ def check_tier1_guardrail(verdict: Verdict) -> Tier1GuardrailResult:
 
 
 @output_guardrail
-async def tier1_output_guardrail(ctx, agent, output):  # pragma: no cover - SDK integration hook
-    verdict = output if isinstance(output, Verdict) else None
-    triggered = bool(verdict and check_tier1_guardrail(verdict).triggered)
+async def tier1_output_guardrail(ctx, agent, output):
+    """SDK tripwire: halt any agent whose final output lands in a Tier-1 category.
+
+    Duck-typed so it accepts both runtime AssessmentOutput objects and Verdicts.
+    """
+    category = str(getattr(output, "category", "") or "")
+    severity_tier = getattr(output, "severity_tier", None)
+    triggered = category in TIER1_CATEGORIES or severity_tier == 1
+    info = {"check": "tier1", "category": category}
     if GuardrailFunctionOutput is None:
-        return {"tripwire_triggered": triggered, "output_info": "tier1-check"}
-    return GuardrailFunctionOutput(output_info="tier1-check", tripwire_triggered=triggered)
+        return {"tripwire_triggered": triggered, "output_info": info}
+    return GuardrailFunctionOutput(output_info=info, tripwire_triggered=triggered)

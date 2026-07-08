@@ -193,8 +193,15 @@ def retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
 
 @function_tool
 def retrieve_policy_tool(query: str) -> str:
-    """Retrieve short policy clauses for agent grounding."""
+    """Retrieve the community-guideline clauses most relevant to a content signal.
+
+    Args:
+        query: Natural-language description of the observed content signal
+            (e.g. "user telling another player to hurt themselves").
+    """
     clauses = retrieve_policy(query)
     return "\n".join(
-        f"{clause['clause_id']}: {clause['category']} - {clause['summary']}" for clause in clauses
+        f"{clause['clause_id']} [Tier {clause['severity_tier']}] {clause['pillar']} / {clause['category']}: "
+        f"{clause['summary']}"
+        for clause in clauses
     )

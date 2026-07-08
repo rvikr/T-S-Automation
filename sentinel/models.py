@@ -34,6 +34,9 @@ class ProductionAssessment:
     confidence: float
     rationale: str
     evidence_summary: str
+    reviewer_chain: list[str] = field(default_factory=list)
+    agent_events: list[str] = field(default_factory=list)
+    cited_clauses: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

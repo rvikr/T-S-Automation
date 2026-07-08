@@ -6,10 +6,14 @@ import re
 from pathlib import Path
 
 try:
-    from agents import function_tool
+    from agents import RunContextWrapper, function_tool
 except ImportError:  # pragma: no cover
+    RunContextWrapper = None  # type: ignore[assignment]
+
     def function_tool(func):
         return func
+
+from typing import Any
 
 from sentinel.models import Case, Precedent, Verdict
 from sentinel.config import DB_DIR
@@ -212,7 +216,44 @@ def clear_precedents(db_path: str | Path) -> None:
         return
 
 
+def retrieve_precedents_by_category(category: str, db_path: str | Path, limit: int = 3) -> list[Precedent]:
+    """Most recent senior/human resolutions in a category, for production cases without synthetic signatures."""
+    if category in TIER1_CATEGORIES:
+        return []
+    init_db(db_path)
+    with db_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, embedding, verdict, category, clause, rationale
+            FROM precedents
+            WHERE category = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (category, limit),
+        ).fetchall()
+    return [
+        Precedent(id=row[0], embedding=row[1], verdict=row[2], category=row[3], clause=row[4], rationale=row[5])
+        for row in rows
+    ]
+
+
 @function_tool
-def retrieve_precedents_tool(case_summary: str) -> str:
-    """Placeholder SDK tool surface; local runs call retrieve_precedents with db context."""
-    return f"Precedent lookup requested for: {case_summary[:120]}"
+def retrieve_precedents_tool(ctx: RunContextWrapper[Any], category: str) -> str:
+    """Look up how similar past cases in a policy category were resolved by senior or human reviewers.
+
+    Args:
+        category: The exact policy category you are considering for this case.
+    """
+    db_path = getattr(ctx.context, "db_path", None)
+    if not db_path:
+        return "No precedent store is available for this run."
+    if category in TIER1_CATEGORIES:
+        return "Tier-1 categories never use precedents; they always route to human review."
+    precedents = retrieve_precedents_by_category(category, db_path)
+    if not precedents:
+        return f"No stored precedents for category '{category}'."
+    return "\n".join(
+        f"Precedent #{precedent.id}: resolved '{precedent.verdict}' under {precedent.clause}. {precedent.rationale[:220]}"
+        for precedent in precedents
+    )

@@ -2,23 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-try:
-    from agents import Agent, handoff
-except ImportError:  # pragma: no cover
-    Agent = None
-
-    def handoff(agent):
-        return agent
-
 from sentinel.models import Case, Verdict
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.precedent_memory import retrieve_precedents
-
-
-def build_sdk_agent(name: str, instructions: str, tools: list | None = None, handoffs: list | None = None):
-    if Agent is None:
-        return None
-    return Agent(name=name, instructions=instructions, tools=tools or [], handoffs=handoffs or [])
 
 
 def specialist_review(case: Case, reviewer: str, db_path: str | Path) -> Verdict:

@@ -1,13 +1,14 @@
+"""Human-escalation ticketing.
+
+Deliberately NOT exposed as an agent function tool: escalation is a policy
+invariant enforced by the orchestrator, so the AI can neither create nor skip
+a ticket.
+"""
+
 from __future__ import annotations
 
 import uuid
 from pathlib import Path
-
-try:
-    from agents import function_tool
-except ImportError:  # pragma: no cover
-    def function_tool(func):
-        return func
 
 from sentinel.models import Case, Ticket
 from sentinel.tools.audit_log import db_connection, init_db, utc_now
@@ -66,7 +67,3 @@ def list_human_tickets(db_path: str | Path) -> list[Ticket]:
     ]
 
 
-@function_tool
-def create_human_ticket_tool(case_id: str, severity: int, category: str) -> str:
-    """OpenAPI-compatible ticketing placeholder for POST /tickets."""
-    return f"Ticket request accepted for case={case_id}, severity={severity}, category={category}"

@@ -2,23 +2,76 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sentinel.agents.common import build_sdk_agent
 from sentinel.models import Case, Verdict
-from sentinel.tools.policy_retrieval import get_clause_for_category, retrieve_policy_tool
-from sentinel.tools.precedent_memory import retrieve_precedents_tool, write_precedent
-
-
-SENIOR_REVIEWER_INSTRUCTIONS = (
-    "Re-adjudicate ambiguous synthetic cases with stricter policy grounding. "
-    "Tier-1 categories remain human-only and must not receive detailed analysis."
-)
-
-
-def build_senior_reviewer():
-    return build_sdk_agent("Senior Reviewer", SENIOR_REVIEWER_INSTRUCTIONS, [retrieve_policy_tool, retrieve_precedents_tool])
+from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category
+from sentinel.tools.precedent_memory import write_precedent
 
 
 def review_case(case: Case, initial_verdict: Verdict, db_path: str | Path) -> Verdict:
+    if case.metadata.get("analysis_mode") == "production" and _agent_runtime_ready():
+        return _production_senior_review(case, initial_verdict, db_path)
+    return _synthetic_senior_review(case, initial_verdict, db_path)
+
+
+def _agent_runtime_ready() -> bool:
+    try:
+        from sentinel.agents.runtime import runtime_available
+    except ImportError:
+        return False
+    return runtime_available()
+
+
+def _production_senior_review(case: Case, initial_verdict: Verdict, db_path: str | Path) -> Verdict:
+    from sentinel.agents.runtime import run_senior_case
+
+    try:
+        assessment = run_senior_case(case, initial_verdict, db_path)
+    except Exception as exc:
+        return Verdict(
+            case_id=case.id,
+            decision="ambiguous",
+            severity_tier=initial_verdict.severity_tier,
+            category=initial_verdict.category,
+            policy_clause=initial_verdict.policy_clause,
+            confidence=0.0,
+            rationale=f"Senior agent runtime failed ({type(exc).__name__}); failing closed to human review.",
+            reviewer="senior",
+        )
+
+    category = assessment.category if assessment.category in POLICY_CLAUSES else initial_verdict.category
+    clause = get_clause_for_category(category)
+    events = list(getattr(assessment, "agent_events", []) or [])
+    if events:
+        case.metadata.setdefault("agent_events", []).extend(events)
+    citations = list(getattr(assessment, "cited_clauses", []) or [])
+    if citations:
+        existing = case.metadata.setdefault("cited_clauses", [])
+        existing.extend(citation for citation in citations if citation not in existing)
+
+    if clause.tier == 1 or category in TIER1_CATEGORIES:
+        decision = "ambiguous"
+        confidence = max(assessment.confidence, 0.95)
+        rationale = "Tier-1 signal surfaced during senior review; automated decision bypassed for human review."
+    else:
+        decision = assessment.decision
+        confidence = assessment.confidence
+        rationale = assessment.rationale or f"Senior review resolved the case against {clause.citation}."
+
+    verdict = Verdict(
+        case_id=case.id,
+        decision=decision,  # type: ignore[arg-type]
+        severity_tier=clause.tier,
+        category=category,
+        policy_clause=clause.citation,
+        confidence=max(0.0, min(float(confidence), 1.0)),
+        rationale=rationale,
+        reviewer="senior",
+    )
+    write_precedent(case, verdict, db_path)
+    return verdict
+
+
+def _synthetic_senior_review(case: Case, initial_verdict: Verdict, db_path: str | Path) -> Verdict:
     clause = get_clause_for_category(initial_verdict.category)
     label = str(case.metadata.get("synthetic_label", "")).lower()
     if clause.tier == 1:

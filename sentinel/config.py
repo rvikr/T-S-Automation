@@ -31,6 +31,7 @@ class Settings:
     senior_model: str
     production_model: str
     transcribe_model: str
+    embed_model: str
     db_path: Path
 
 
@@ -39,9 +40,10 @@ def load_settings() -> Settings:
     load_dotenv(PROJECT_ROOT / ".env")
     return Settings(
         openai_api_key_present=bool(os.getenv("OPENAI_API_KEY")),
-        specialist_model=os.getenv("SENTINEL_SPECIALIST_MODEL", "configured-at-runtime"),
-        senior_model=os.getenv("SENTINEL_SENIOR_MODEL", "configured-at-runtime"),
+        specialist_model=os.getenv("SENTINEL_SPECIALIST_MODEL", "gpt-4o-mini"),
+        senior_model=os.getenv("SENTINEL_SENIOR_MODEL", "gpt-4o"),
         production_model=os.getenv("SENTINEL_PRODUCTION_MODEL", "gpt-4o-mini"),
         transcribe_model=os.getenv("SENTINEL_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
+        embed_model=os.getenv("SENTINEL_EMBED_MODEL", "text-embedding-3-small"),
         db_path=Path(os.getenv("SENTINEL_DB_PATH", DEFAULT_DB_PATH)),
     )

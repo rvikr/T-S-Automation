@@ -2,37 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-try:
-    from agents import Runner
-except ImportError:  # pragma: no cover
-    Runner = None
-
 from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
-from sentinel.agents.common import build_sdk_agent
-from sentinel.agents.senior_reviewer import build_senior_reviewer, review_case as senior_review
+from sentinel.agents.senior_reviewer import review_case as senior_review
 from sentinel.config import DEFAULT_DB_PATH
 from sentinel.guardrails import check_tier1_guardrail
 from sentinel.models import BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
-from sentinel.tools.hash_match import hash_match
+from sentinel.tools.hash_match import hash_match, known_hash_match
 from sentinel.tools.media_utils import detect_asset_type, quarantine
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.ticketing import create_human_ticket
-
-
-def build_orchestrator_agent():
-    handoffs = [
-        image_agent.build_image_agent(),
-        audio_agent.build_audio_agent(),
-        video_agent.build_video_agent(),
-        text_agent.build_text_agent(),
-        build_senior_reviewer(),
-    ]
-    return build_sdk_agent(
-        "Orchestrator",
-        "Detect asset type and hand off to the matching synthetic moderation specialist.",
-        handoffs=[agent for agent in handoffs if agent is not None],
-    )
 
 
 def _dispatch(case: Case, db_path: str | Path, trace: list[str]) -> Verdict:
@@ -89,16 +68,22 @@ def _write_case_audit(case: Case, verdict: Verdict, db_path: str | Path):
     )
 
 
+def _drain_agent_events(case: Case, trace: list[str]) -> None:
+    for event in case.metadata.pop("agent_events", []):
+        trace.append(f"agent.{event}")
+
+
 def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
     init_db(db_path)
     trace: list[str] = [f"ingest:{case.id}"]
     specialist_verdict = _dispatch(case, db_path, trace)
+    _drain_agent_events(case, trace)
     trace.append(f"specialist.verdict:{specialist_verdict.decision}:{specialist_verdict.policy_clause}")
 
     guardrail = check_tier1_guardrail(specialist_verdict)
     if guardrail.triggered:
         trace.append("guardrail.tier1.triggered")
-        trace.append(f"hash_match.flag:{hash_match(case)}")
+        trace.append(f"hash_match.flag:{hash_match(case) or known_hash_match(case.asset_path)}")
         quarantined = quarantine(case)
         ticket = create_human_ticket(case, 1, specialist_verdict.category, db_path)
         final_verdict = _human_only_verdict(case, specialist_verdict)
@@ -108,13 +93,20 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
         return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
 
     if specialist_verdict.decision == "ambiguous":
-        trace.append("handoff:senior-reviewer")
-        final_verdict = senior_review(case, specialist_verdict, db_path)
+        if specialist_verdict.reviewer == "senior":
+            # The specialist already handed off to the senior agent inside the run.
+            trace.append("handoff:senior-reviewer:in-run")
+            final_verdict = specialist_verdict
+        else:
+            trace.append("handoff:senior-reviewer")
+            final_verdict = senior_review(case, specialist_verdict, db_path)
+            _drain_agent_events(case, trace)
         trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
         if final_verdict.decision == "ambiguous":
             ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
             quarantined = quarantine(case)
             _write_case_audit(case, final_verdict, db_path)
+            trace.append("human_ticket.created")
             return CaseResult(
                 case=case,
                 verdict=final_verdict,

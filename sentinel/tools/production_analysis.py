@@ -17,10 +17,14 @@ MAX_VIDEO_FRAMES = 4
 
 
 def production_review(case: Case, reviewer: str, db_path) -> Verdict:
-    assessment = analyze_asset(case)
+    assessment = analyze_asset(case, db_path=db_path)
     category = assessment.category if assessment.category in POLICY_CLAUSES else "No Violation"
     clause = get_clause_for_category(category)
     case.metadata["detected_category"] = category
+    _record_agent_metadata(case, assessment)
+    senior_reviewed = any("senior" in name.lower() for name in getattr(assessment, "reviewer_chain", []) or [])
+    if senior_reviewed:
+        reviewer = "senior"
 
     if clause.tier == 1 or category in TIER1_CATEGORIES:
         decision = "ambiguous"
@@ -30,7 +34,7 @@ def production_review(case: Case, reviewer: str, db_path) -> Verdict:
         decision = "allow"
         rationale = assessment.rationale or "No policy violation detected in the uploaded asset."
         confidence = assessment.confidence
-    elif clause.tier == 2:
+    elif clause.tier == 2 and not senior_reviewed:
         decision = "ambiguous"
         rationale = (
             f"Production analysis found a context-sensitive {category} signal. "
@@ -54,7 +58,48 @@ def production_review(case: Case, reviewer: str, db_path) -> Verdict:
     )
 
 
-def analyze_asset(case: Case, client: Any | None = None) -> ProductionAssessment:
+def _record_agent_metadata(case: Case, assessment: ProductionAssessment) -> None:
+    events = list(getattr(assessment, "agent_events", []) or [])
+    if events:
+        case.metadata.setdefault("agent_events", []).extend(events)
+    citations = list(getattr(assessment, "cited_clauses", []) or [])
+    if citations:
+        existing = case.metadata.setdefault("cited_clauses", [])
+        existing.extend(citation for citation in citations if citation not in existing)
+
+
+def _agents_sdk_available() -> bool:
+    try:
+        import agents  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def analyze_asset(case: Case, client: Any | None = None, db_path: Any | None = None) -> ProductionAssessment:
+    """Classify an asset. Agent runtime when available; legacy single-shot classifier otherwise.
+
+    On agent-runtime failure the system fails closed: the case comes back
+    ambiguous and the orchestrator rails escalate it to review.
+    """
+    if _agents_sdk_available() and load_settings().openai_api_key_present:
+        from sentinel.agents.runtime import run_specialist_case
+
+        try:
+            return run_specialist_case(case, db_path=db_path, client=client)
+        except Exception as exc:
+            return ProductionAssessment(
+                decision="ambiguous",
+                category="No Violation",
+                confidence=0.0,
+                rationale=f"Agent runtime failed ({type(exc).__name__}); failing closed to escalated review.",
+                evidence_summary="Agent runtime error; no automated analysis available.",
+                agent_events=[f"agent_runtime.error:{type(exc).__name__}"],
+            )
+    return _legacy_analyze_asset(case, client)
+
+
+def _legacy_analyze_asset(case: Case, client: Any | None = None) -> ProductionAssessment:
     client = client or _openai_client()
     if case.asset_type == "audio":
         transcript = transcribe_audio_asset(case, client)

@@ -49,24 +49,6 @@ def load_synthetic_cases(manifest_path: str | Path | None = None) -> list[Case]:
     return cases
 
 
-def read_synthetic_label(case: Case) -> str:
-    label = str(case.metadata.get("synthetic_label", ""))
-    if label:
-        return label
-    path = Path(case.asset_path)
-    if path.exists():
-        return path.read_text(encoding="utf-8", errors="ignore")[:1000]
-    return ""
-
-
-def sample_video_frames(case: Case, max_frames: int = 3) -> list[str]:
-    return [f"synthetic-frame-{index + 1}:{case.id}" for index in range(max_frames)]
-
-
-def transcribe_audio(case: Case) -> str:
-    return f"synthetic transcript for {case.id}: {read_synthetic_label(case)}"
-
-
 def quarantine(case: Case, quarantine_dir: str | Path = QUARANTINE_DIR) -> bool:
     target_dir = Path(quarantine_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
