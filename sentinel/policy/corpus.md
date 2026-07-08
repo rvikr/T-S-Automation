@@ -2,6 +2,8 @@
 
 This corpus is a compact taxonomy for demo grounding. It is mapped from the four Roblox Community Standards pillars without copying the standards' full text. Source link: https://about.roblox.com/community-standards
 
+The machine-readable source of truth is `POLICY_CLAUSES` in `sentinel/tools/policy_retrieval.py`; this document is the human-readable mirror. The semantic index is built from the same source with `python -m sentinel.tools.policy_index`.
+
 ## Safety
 
 - `SAF-CE-001` Child Exploitation: Tier 1. Synthetic stand-ins only. Always hash-match, quarantine, and route to human review.

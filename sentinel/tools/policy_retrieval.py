@@ -170,6 +170,15 @@ def get_clause_for_category(category: str) -> PolicyClause:
 
 
 def retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
+    from sentinel.tools.policy_index import semantic_policy_search
+
+    semantic = semantic_policy_search(query, limit)
+    if semantic is not None:
+        return semantic
+    return _keyword_retrieve_policy(query, limit)
+
+
+def _keyword_retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
     query_lower = query.lower()
     ranked: list[PolicyClause] = []
     for clause in POLICY_CLAUSES.values():
@@ -200,8 +209,12 @@ def retrieve_policy_tool(query: str) -> str:
             (e.g. "user telling another player to hurt themselves").
     """
     clauses = retrieve_policy(query)
-    return "\n".join(
-        f"{clause['clause_id']} [Tier {clause['severity_tier']}] {clause['pillar']} / {clause['category']}: "
-        f"{clause['summary']}"
-        for clause in clauses
-    )
+    lines = []
+    for clause in clauses:
+        relevance = clause.get("relevance")
+        suffix = f" (relevance {relevance})" if relevance is not None else ""
+        lines.append(
+            f"{clause['clause_id']} [Tier {clause['severity_tier']}] {clause['pillar']} / {clause['category']}: "
+            f"{clause['summary']}{suffix}"
+        )
+    return "\n".join(lines)
