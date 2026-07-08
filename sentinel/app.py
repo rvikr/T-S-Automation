@@ -11,6 +11,7 @@ from dataclasses import asdict
 
 import streamlit as st
 
+from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
 from sentinel.config import DEFAULT_DB_PATH
 from sentinel.tools.audit_log import init_db, list_moderation_logs
@@ -23,12 +24,28 @@ from sentinel.ui_uploads import (
     MODERATION_VIEW_LABEL,
     UPLOAD_EXTENSIONS,
     build_production_uploaded_case,
+    describe_live_event,
     describe_trace_event,
     format_moderation_log_rows,
     list_eval_runs,
     load_eval_run,
     openai_trace_url,
 )
+
+
+def run_case_with_live_status(selected_case):
+    """Run a case while streaming agent tool calls and handoffs into st.status."""
+    with st.status("Moderation agents are reviewing the upload...", expanded=True) as status:
+        def _render(event: str) -> None:
+            status.write(describe_live_event(event))
+
+        with live_events.event_sink(_render):
+            result = run_case(selected_case, db_path=DEFAULT_DB_PATH)
+        for event in result.trace:
+            icon, text = describe_trace_event(event)
+            status.write(f"{icon} {text}")
+        status.update(label="Review complete", state="complete", expanded=False)
+    return result
 
 
 DECISION_BADGES = {
@@ -248,9 +265,7 @@ else:
                 content_type=upload.type,
                 payload=upload.getvalue(),
             )
-            with st.status("Moderation agents are reviewing the upload...", expanded=False) as status:
-                result = run_case(selected_case, db_path=DEFAULT_DB_PATH)
-                status.update(label="Review complete", state="complete")
+            result = run_case_with_live_status(selected_case)
             render_result(result)
 
     with synthetic_tab:

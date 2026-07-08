@@ -190,6 +190,25 @@ def describe_trace_event(event: str) -> tuple[str, str]:
     return "•", event
 
 
+def describe_live_event(event: str) -> str:
+    """Map a live:* runtime event to a status line rendered mid-run."""
+    if event.startswith("live:agent_start:"):
+        return f"🤖 {event.split(':', 2)[2]} is on the case"
+    if event.startswith("live:thinking:"):
+        return f"💭 {event.split(':', 2)[2]} is reasoning over the evidence"
+    if event.startswith("live:tool_call:"):
+        _, _, agent, tool = event.split(":", 3)
+        return f"🔧 {agent} called `{tool}`"
+    if event.startswith("live:tool_done:"):
+        _, _, agent, tool = event.split(":", 3)
+        return f"✅ `{tool}` returned to {agent}"
+    if event.startswith("live:handoff:"):
+        return f"🔀 Handoff: {event.split(':', 2)[2].replace('->', ' → ')}"
+    if event.startswith("live:agent_end:"):
+        return f"📝 {event.split(':', 2)[2]} finalized its assessment"
+    return event
+
+
 def list_eval_runs(eval_dir: str | Path = EVAL_RUNS_DIR) -> list[Path]:
     root = Path(eval_dir)
     if not root.exists():

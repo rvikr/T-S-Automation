@@ -19,9 +19,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agents import Agent, ModelSettings, Runner
+from agents import Agent, ModelSettings, RunHooks, Runner
 from agents.exceptions import OutputGuardrailTripwireTriggered
 
+from sentinel.agents import live_events
 from sentinel.config import Settings, load_settings
 from sentinel.guardrails import tier1_output_guardrail
 from sentinel.models import Case, ProductionAssessment, Verdict
@@ -57,6 +58,37 @@ class AssessmentOutput(BaseModel):
 def runtime_available(settings: Settings | None = None) -> bool:
     settings = settings or load_settings()
     return settings.openai_api_key_present
+
+
+class _LiveRunHooks(RunHooks):
+    """Mirror run lifecycle events into the live UI sink.
+
+    run_sync drives its event loop in the calling thread, so these fire
+    synchronously in the Streamlit script thread — mid-run rendering with no
+    async rewrite.
+    """
+
+    async def on_agent_start(self, context, agent) -> None:
+        live_events.emit(f"live:agent_start:{agent.name}")
+
+    async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
+        live_events.emit(f"live:thinking:{agent.name}")
+
+    async def on_tool_start(self, context, agent, tool) -> None:
+        live_events.emit(f"live:tool_call:{agent.name}:{getattr(tool, 'name', 'tool')}")
+
+    async def on_tool_end(self, context, agent, tool, result) -> None:
+        live_events.emit(f"live:tool_done:{agent.name}:{getattr(tool, 'name', 'tool')}")
+
+    async def on_handoff(self, context, from_agent, to_agent) -> None:
+        live_events.emit(f"live:handoff:{from_agent.name}->{to_agent.name}")
+
+    async def on_agent_end(self, context, agent, output) -> None:
+        live_events.emit(f"live:agent_end:{agent.name}")
+
+
+def _run_hooks() -> RunHooks | None:
+    return _LiveRunHooks() if live_events.sink_active() else None
 
 
 def _taxonomy_block() -> str:
@@ -308,7 +340,7 @@ def run_specialist_case(case: Case, db_path: str | Path | None = None, client: A
     specialist = build_specialist_agent(asset_type, senior, settings)
     events.append(f"agent_run:{specialist.name}:{settings.specialist_model}")
     try:
-        result = Runner.run_sync(specialist, input_items, context=context, max_turns=MAX_AGENT_TURNS)
+        result = Runner.run_sync(specialist, input_items, context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
@@ -345,7 +377,7 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
     senior = build_senior_agent(settings)
     events.append(f"agent_run:{senior.name}:{settings.senior_model}")
     try:
-        result = Runner.run_sync(senior, input_items + [escalation_note], context=context, max_turns=MAX_AGENT_TURNS)
+        result = Runner.run_sync(senior, input_items + [escalation_note], context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
