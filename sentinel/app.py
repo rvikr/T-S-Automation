@@ -27,6 +27,7 @@ from sentinel.ui_uploads import (
     format_moderation_log_rows,
     list_eval_runs,
     load_eval_run,
+    openai_trace_url,
 )
 
 
@@ -83,6 +84,11 @@ def render_verdict_card(result) -> None:
             st.link_button(f"Open {ticket.external_key} in Jira", ticket.external_url)
         else:
             st.error(f"🎫 Human review ticket created: {ticket.id}")
+
+    trace_id = result.case.metadata.get("openai_trace_id")
+    if trace_id:
+        st.link_button("🛰️ Open the OpenAI trace for this run", openai_trace_url(trace_id))
+        st.caption(f"Agents SDK trace `{trace_id}` — tool calls, handoffs, and guardrail spans.")
 
 
 def render_trace_timeline(trace: list[str]) -> None:

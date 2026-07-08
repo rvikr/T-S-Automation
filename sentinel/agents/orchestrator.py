@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+try:
+    from agents import gen_trace_id
+    from agents import trace as sdk_trace
+except ImportError:  # pragma: no cover - SDK installed in normal setup
+    gen_trace_id = None
+    sdk_trace = None
+
 from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
 from sentinel.agents.senior_reviewer import review_case as senior_review
-from sentinel.config import DEFAULT_DB_PATH
+from sentinel.config import DEFAULT_DB_PATH, load_settings
 from sentinel.guardrails import check_tier1_guardrail
 from sentinel.models import BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
@@ -85,9 +92,37 @@ def _escalate_ticket(case: Case, verdict: Verdict, ticket, db_path: str | Path, 
     return attach_external_reference(ticket, key, url, db_path)
 
 
+def _tracing_enabled(case: Case) -> bool:
+    """Only production runs with a real API key create OpenAI platform traces.
+
+    The offline/synthetic path must never construct SDK objects: determinism
+    and hermetic tests depend on it.
+    """
+    return (
+        sdk_trace is not None
+        and case.metadata.get("analysis_mode") == "production"
+        and load_settings().openai_api_key_present
+    )
+
+
 def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
     init_db(db_path)
     trace: list[str] = [f"ingest:{case.id}"]
+    if _tracing_enabled(case):
+        trace_id = gen_trace_id()
+        case.metadata["openai_trace_id"] = trace_id
+        trace.append(f"trace.openai:{trace_id}")
+        with sdk_trace(
+            "Sentinel moderation",
+            trace_id=trace_id,
+            group_id=case.id,
+            metadata={"case_id": case.id, "modality": case.asset_type},
+        ):
+            return _run_case_inner(case, db_path, trace)
+    return _run_case_inner(case, db_path, trace)
+
+
+def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseResult:
     specialist_verdict = _dispatch(case, db_path, trace)
     _drain_agent_events(case, trace)
     trace.append(f"specialist.verdict:{specialist_verdict.decision}:{specialist_verdict.policy_clause}")

@@ -17,7 +17,7 @@ from sentinel.config import DEFAULT_DB_PATH, UPLOADS_DIR
 from sentinel.models import ApiKeyRecord, Case, CaseResult, ModerationLog
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.api_keys import authenticate_api_key, create_api_key, list_api_keys, revoke_api_key
-from sentinel.ui_uploads import safe_upload_name
+from sentinel.ui_uploads import openai_trace_url, safe_upload_name
 
 
 TICKETING_SYSTEMS = ["jira", "servicenow", "zendesk", "webhook"]
@@ -224,6 +224,17 @@ def _result_payload(result: CaseResult) -> dict:
             "ticketing_payload": _ticketing_payload(result, action, escalation),
             "jira": _jira_reference(result),
         },
+        "observability": _observability_payload(result),
+    }
+
+
+def _observability_payload(result: CaseResult) -> dict:
+    trace_id = result.case.metadata.get("openai_trace_id")
+    return {
+        "openai_trace_id": trace_id,
+        "openai_trace_url": openai_trace_url(trace_id) if trace_id else None,
+        "latency_ms": result.case.metadata.get("latency_ms"),
+        "token_usage": result.case.metadata.get("token_usage"),
     }
 
 

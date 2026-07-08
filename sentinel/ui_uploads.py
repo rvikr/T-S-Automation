@@ -26,6 +26,12 @@ FLOW_STAGES = [
 
 UPLOAD_EXTENSIONS = sorted(IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | {".txt", ".md", ".json"})
 
+OPENAI_TRACES_URL_TEMPLATE = "https://platform.openai.com/traces/trace?trace_id={trace_id}"
+
+
+def openai_trace_url(trace_id: str) -> str:
+    return OPENAI_TRACES_URL_TEMPLATE.format(trace_id=trace_id)
+
 DEMO_POLICY_SIGNALS = {
     "Benign upload": ("No Violation", "allow", "benign synthetic demo upload"),
     "Clear reject": (
@@ -131,6 +137,8 @@ def describe_trace_event(event: str) -> tuple[str, str]:
     """Map a raw pipeline trace entry to an (icon, human-readable text) pair."""
     if event.startswith("ingest:"):
         return "📥", f"Case ingested: {event.split(':', 1)[1]}"
+    if event.startswith("trace.openai:"):
+        return "🛰️", f"OpenAI platform trace started: {event.split(':', 1)[1]}"
     if event.startswith("orchestrator.detect_asset_type:"):
         return "🧭", f"Modality detected: {event.rsplit(':', 1)[1]}"
     if event == "production_analysis:enabled":
