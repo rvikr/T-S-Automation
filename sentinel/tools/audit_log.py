@@ -77,6 +77,8 @@ def init_db(db_path: str | Path) -> Path:
         _ensure_column(conn, "audits", "tenant_name", "TEXT")
         _ensure_column(conn, "tickets", "api_key_id", "TEXT")
         _ensure_column(conn, "tickets", "tenant_name", "TEXT")
+        _ensure_column(conn, "tickets", "external_key", "TEXT")
+        _ensure_column(conn, "tickets", "external_url", "TEXT")
     return path
 
 
@@ -169,7 +171,7 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
         ).fetchall()
         ticket_rows = conn.execute(
             f"""
-            SELECT id, case_id, severity, category, status, created_at
+            SELECT id, case_id, severity, category, status, created_at, external_key, external_url
             FROM tickets
             {ticket_filter}
             ORDER BY created_at DESC
@@ -186,6 +188,8 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
             category=row[3],
             status=row[4],
             created_at=row[5],
+            external_key=row[6],
+            external_url=row[7],
         )
         tickets_by_case.setdefault(ticket.case_id, ticket)
 

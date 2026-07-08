@@ -10,8 +10,9 @@ from sentinel.models import BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
 from sentinel.tools.hash_match import hash_match, known_hash_match
 from sentinel.tools.media_utils import detect_asset_type, quarantine
+from sentinel.tools.jira_client import create_jira_issue
 from sentinel.tools.policy_retrieval import get_clause_for_category
-from sentinel.tools.ticketing import create_human_ticket
+from sentinel.tools.ticketing import attach_external_reference, create_human_ticket
 
 
 def _dispatch(case: Case, db_path: str | Path, trace: list[str]) -> Verdict:
@@ -73,6 +74,17 @@ def _drain_agent_events(case: Case, trace: list[str]) -> None:
         trace.append(f"agent.{event}")
 
 
+def _escalate_ticket(case: Case, verdict: Verdict, ticket, db_path: str | Path, trace: list[str]):
+    """Mirror the local ticket to Jira when configured; local ticket is never lost."""
+    external = create_jira_issue(ticket, case, verdict)
+    if external is None:
+        trace.append("ticket.external:local-only")
+        return ticket
+    key, url = external
+    trace.append(f"ticket.external:jira:{key}")
+    return attach_external_reference(ticket, key, url, db_path)
+
+
 def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
     init_db(db_path)
     trace: list[str] = [f"ingest:{case.id}"]
@@ -85,10 +97,11 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
         trace.append("guardrail.tier1.triggered")
         trace.append(f"hash_match.flag:{hash_match(case) or known_hash_match(case.asset_path)}")
         quarantined = quarantine(case)
-        ticket = create_human_ticket(case, 1, specialist_verdict.category, db_path)
         final_verdict = _human_only_verdict(case, specialist_verdict)
-        _write_case_audit(case, final_verdict, db_path)
+        ticket = create_human_ticket(case, 1, specialist_verdict.category, db_path)
         trace.append("human_ticket.created")
+        ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
+        _write_case_audit(case, final_verdict, db_path)
         trace.append("quarantine.completed")
         return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
 
@@ -104,9 +117,10 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
         trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
         if final_verdict.decision == "ambiguous":
             ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
+            trace.append("human_ticket.created")
+            ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
             quarantined = quarantine(case)
             _write_case_audit(case, final_verdict, db_path)
-            trace.append("human_ticket.created")
             return CaseResult(
                 case=case,
                 verdict=final_verdict,

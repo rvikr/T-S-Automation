@@ -8,6 +8,7 @@ a ticket.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from sentinel.models import Case, Ticket
@@ -44,12 +45,22 @@ def create_human_ticket(case: Case, severity: int, category: str, db_path: str |
     return ticket
 
 
+def attach_external_reference(ticket: Ticket, external_key: str, external_url: str, db_path: str | Path) -> Ticket:
+    """Record the external (e.g. Jira) issue on an existing local ticket."""
+    with db_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET external_key = ?, external_url = ? WHERE id = ?",
+            (external_key, external_url, ticket.id),
+        )
+    return replace(ticket, external_key=external_key, external_url=external_url)
+
+
 def list_human_tickets(db_path: str | Path) -> list[Ticket]:
     init_db(db_path)
     with db_connection(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, case_id, severity, category, status, created_at
+            SELECT id, case_id, severity, category, status, created_at, external_key, external_url
             FROM tickets
             ORDER BY created_at DESC
             """
@@ -62,6 +73,8 @@ def list_human_tickets(db_path: str | Path) -> list[Ticket]:
             category=row[3],
             status=row[4],
             created_at=row[5],
+            external_key=row[6],
+            external_url=row[7],
         )
         for row in rows
     ]

@@ -47,6 +47,8 @@ class Ticket:
     category: str
     status: str
     created_at: str
+    external_key: str | None = None
+    external_url: str | None = None
 
 
 @dataclass(frozen=True)

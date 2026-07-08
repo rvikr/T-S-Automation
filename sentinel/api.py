@@ -222,8 +222,16 @@ def _result_payload(result: CaseResult) -> dict:
         "integration": {
             "ticketing_systems": TICKETING_SYSTEMS,
             "ticketing_payload": _ticketing_payload(result, action, escalation),
+            "jira": _jira_reference(result),
         },
     }
+
+
+def _jira_reference(result: CaseResult) -> dict | None:
+    ticket = result.ticket
+    if ticket is None or not ticket.external_key:
+        return None
+    return {"key": ticket.external_key, "url": ticket.external_url}
 
 
 def _result_escalation(result: CaseResult) -> dict | None:
