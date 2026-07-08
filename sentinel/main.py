@@ -7,7 +7,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 if __package__ is None or __package__ == "":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    _this_dir = Path(__file__).resolve().parent
+    sys.path[:] = [p for p in sys.path if Path(p).resolve() != _this_dir]
+    sys.path.insert(0, str(_this_dir.parent))
 
 from sentinel.agents.orchestrator import run_batch, run_case
 from sentinel.config import DEFAULT_DB_PATH

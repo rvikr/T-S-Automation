@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_this_dir = Path(__file__).resolve().parent
+sys.path[:] = [p for p in sys.path if Path(p).resolve() != _this_dir]
+sys.path.insert(0, str(_this_dir.parent))
+
 from dataclasses import asdict
 
 import streamlit as st
