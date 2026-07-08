@@ -66,6 +66,37 @@ class UploadCaseTests(unittest.TestCase):
             ],
         )
 
+    def test_describe_trace_event_renders_agent_and_rail_steps(self):
+        examples = [
+            ("agent.agent_run:Text Specialist:gpt-4o-mini", "Text Specialist agent started (gpt-4o-mini)"),
+            ("agent.tool_call:Text Specialist:retrieve_policy_tool", "Text Specialist called retrieve_policy_tool"),
+            ("agent.handoff:Text Specialist->Senior Reviewer", "Text Specialist → Senior Reviewer"),
+            ("agent.guardrail.tier1.tripwire:SAF-TVE-001", "Tier-1 guardrail halted the agent mid-run (SAF-TVE-001)"),
+            ("ticket.external:jira:MOD-42", "Jira issue created: MOD-42"),
+            ("quarantine.completed", "Content quarantined"),
+        ]
+        for event, expected_fragment in examples:
+            with self.subTest(event=event):
+                icon, text = ui_uploads.describe_trace_event(event)
+                self.assertTrue(icon)
+                self.assertIn(expected_fragment, text)
+
+    def test_eval_run_listing_returns_latest_first(self):
+        eval_dir = self.upload_dir / "eval_runs"
+        for name, payload in [
+            ("20260101T000000Z-offline", '{"metrics": {"accuracy": 1.0}}'),
+            ("20260201T000000Z-live", '{"metrics": {"accuracy": 0.8}}'),
+        ]:
+            run_dir = eval_dir / name
+            run_dir.mkdir(parents=True)
+            (run_dir / "results.json").write_text(payload, encoding="utf-8")
+        (eval_dir / "streamlit.out.log").write_text("noise", encoding="utf-8")
+
+        runs = ui_uploads.list_eval_runs(eval_dir)
+
+        self.assertEqual([run.name for run in runs], ["20260201T000000Z-live", "20260101T000000Z-offline"])
+        self.assertEqual(ui_uploads.load_eval_run(runs[0])["metrics"]["accuracy"], 0.8)
+
     def test_log_rows_summarize_escalation_status_and_details(self):
         self.assertTrue(hasattr(ui_uploads, "LOG_VIEW_LABEL"))
         self.assertEqual(ui_uploads.LOG_VIEW_LABEL, "Logs")

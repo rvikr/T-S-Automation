@@ -8,28 +8,26 @@ from sentinel.agents.orchestrator import run_batch, run_case
 from sentinel.config import DEFAULT_DB_PATH
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.media_utils import load_synthetic_cases
+from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.precedent_memory import clear_precedents
 from sentinel.ui_uploads import (
-    FLOW_STAGES,
     LOG_VIEW_LABEL,
+    METRICS_VIEW_LABEL,
     MODERATION_VIEW_LABEL,
     UPLOAD_EXTENSIONS,
     build_production_uploaded_case,
+    describe_trace_event,
     format_moderation_log_rows,
+    list_eval_runs,
+    load_eval_run,
 )
 
 
-def render_flow(trace: list[str]) -> None:
-    trace_text = "\n".join(trace)
-    for index, stage in enumerate(FLOW_STAGES, start=1):
-        if stage == "Senior or human escalation":
-            active = any(marker in trace_text for marker in ["senior", "human_ticket", "quarantine"])
-        elif stage == "Guardrail check":
-            active = "guardrail" in trace_text or "specialist.verdict" in trace_text
-        else:
-            active = True
-        state = "complete" if active else "not needed"
-        st.write(f"{index}. {stage} - {state}")
+DECISION_BADGES = {
+    "allow": ("✅ ALLOW", st.success),
+    "reject": ("⛔ REJECT", st.error),
+    "ambiguous": ("🧑‍⚖️ HUMAN REVIEW", st.warning),
+}
 
 
 def render_preview(upload) -> None:
@@ -47,36 +45,57 @@ def render_preview(upload) -> None:
         st.text_area("Text preview", text[:4000], height=180, disabled=True)
 
 
-def render_result(result) -> None:
+def render_verdict_card(result) -> None:
     verdict = result.verdict
-    top = st.columns(4)
-    top[0].metric("Decision", verdict.decision)
-    top[1].metric("Tier", verdict.severity_tier)
-    top[2].metric("Confidence", f"{verdict.confidence:.0%}")
-    top[3].metric("Reviewer", verdict.reviewer)
+    badge, banner = DECISION_BADGES.get(verdict.decision, (verdict.decision.upper(), st.info))
+    banner(f"{badge} — {verdict.category} (severity tier {verdict.severity_tier})")
+
+    columns = st.columns(4)
+    columns[0].metric("Decision", verdict.decision)
+    columns[1].metric("Severity tier", verdict.severity_tier)
+    columns[2].metric("Confidence", f"{verdict.confidence:.0%}")
+    columns[3].metric("Reviewer", verdict.reviewer)
+
+    clause = get_clause_for_category(verdict.category)
+    st.markdown(f"**Policy clause:** `{verdict.policy_clause}`")
+    st.caption(clause.summary)
+    st.markdown(f"**Rationale:** {verdict.rationale}")
+
+    citations = result.case.metadata.get("cited_clauses") or []
+    if citations:
+        st.markdown("**Clauses cited by the agents:** " + ", ".join(f"`{code}`" for code in citations))
 
     if result.warning_message:
         st.warning(result.warning_message)
+    if result.quarantined:
+        st.info("🔒 Content quarantined pending human review.")
     if result.ticket:
-        st.error(f"Human review ticket created: {result.ticket.id}")
+        ticket = result.ticket
+        if ticket.external_url:
+            st.error(f"🎫 Human review ticket {ticket.id} escalated to Jira as **{ticket.external_key}**")
+            st.link_button(f"Open {ticket.external_key} in Jira", ticket.external_url)
+        else:
+            st.error(f"🎫 Human review ticket created: {ticket.id}")
 
-    st.subheader("Autonomous Moderation Flow")
-    render_flow(result.trace)
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Verdict")
-        st.json(asdict(verdict))
-    with right:
-        st.subheader("Matched Policy Clause")
-        st.code(verdict.policy_clause)
-        st.subheader("Reasoning Trace")
-        for event in result.trace:
-            st.write(event)
+def render_trace_timeline(trace: list[str]) -> None:
+    st.subheader("Agent trace")
+    for event in trace:
+        icon, text = describe_trace_event(event)
+        st.markdown(f"{icon} {text}")
+
+
+def render_result(result) -> None:
+    render_verdict_card(result)
+    render_trace_timeline(result.trace)
+    with st.expander("Raw verdict and trace"):
+        st.json(asdict(result.verdict))
+        st.json({"trace": result.trace})
 
 
 def render_learning_metric(cases) -> None:
-    st.subheader("Learning Metric")
+    st.subheader("Learning metric")
+    st.caption("Senior resolutions are stored as precedents; a second pass over the same batch escalates less.")
     if st.button("Run batch twice"):
         clear_precedents(DEFAULT_DB_PATH)
         first = run_batch(cases, db_path=DEFAULT_DB_PATH)
@@ -90,36 +109,90 @@ def render_learning_metric(cases) -> None:
 
 
 def render_logs_page() -> None:
-    st.subheader("Moderation Logs")
+    st.subheader("Moderation logs")
     logs = list_moderation_logs(DEFAULT_DB_PATH)
     if not logs:
         st.caption("No moderation logs yet.")
         return
 
-    st.dataframe(format_moderation_log_rows(logs), use_container_width=True)
+    st.dataframe(format_moderation_log_rows(logs), width="stretch")
     labels = [f"#{log.id} - {log.case_id}" for log in logs]
     selected_label = st.selectbox("Log details", labels)
     selected_log = logs[labels.index(selected_label)]
+    ticket = (selected_log.escalation_details or {}).get("ticket") or {}
+    if ticket.get("external_url"):
+        st.link_button(f"Open {ticket.get('external_key')} in Jira", ticket["external_url"])
     st.json(asdict(selected_log))
+
+
+def render_metrics_page() -> None:
+    st.subheader("Golden-set evaluation")
+    runs = list_eval_runs()
+    if not runs:
+        st.caption(
+            "No evaluation runs yet. Generate one with "
+            "`python -m sentinel.eval.run_eval` (offline) or `--live` (real agents)."
+        )
+        return
+
+    run_labels = [run.name for run in runs]
+    selected = st.selectbox("Evaluation run", run_labels)
+    data = load_eval_run(runs[run_labels.index(selected)])
+    metrics = data["metrics"]
+
+    columns = st.columns(4)
+    columns[0].metric("Outcome accuracy", f"{metrics['accuracy']:.1%}")
+    tier1 = metrics.get("tier1_recall")
+    columns[1].metric("Tier-1 recall", f"{tier1:.0%}" if tier1 is not None else "n/a")
+    fpr = metrics.get("benign_false_positive_rate")
+    columns[2].metric("Benign FPR", f"{fpr:.1%}" if fpr is not None else "n/a")
+    columns[3].metric("Escalation rate", f"{metrics['escalation_rate']:.1%}")
+
+    st.markdown("**Per-outcome precision / recall / F1**")
+    per_class = metrics["per_class"]
+    st.dataframe(
+        [
+            {"outcome": outcome, **{k: v for k, v in row.items()}}
+            for outcome, row in per_class.items()
+        ],
+        width="stretch",
+    )
+
+    st.markdown("**Confusion matrix** (rows = expected, columns = predicted)")
+    confusion = metrics["confusion_matrix"]
+    st.dataframe(
+        [{"expected": expected, **predictions} for expected, predictions in confusion.items()],
+        width="stretch",
+    )
+
+    misses = [case for case in data["cases"] if not case["correct"]]
+    st.markdown(f"**Misses ({len(misses)})**")
+    if misses:
+        st.dataframe(misses, width="stretch")
+    else:
+        st.caption("No misses in this run.")
 
 
 st.set_page_config(page_title="Sentinel Moderation QA", layout="wide")
 st.title("Sentinel")
+st.caption("Agentic content moderation: specialist agents, senior review, Tier-1 human-only rails.")
 
 init_db(DEFAULT_DB_PATH)
 cases = load_synthetic_cases()
 case_by_label = {f"{case.id} - {case.metadata.get('expected_category')}": case for case in cases}
 
-view = st.sidebar.radio("View", [MODERATION_VIEW_LABEL, LOG_VIEW_LABEL])
+view = st.sidebar.radio("View", [MODERATION_VIEW_LABEL, LOG_VIEW_LABEL, METRICS_VIEW_LABEL])
 
 if view == LOG_VIEW_LABEL:
     render_logs_page()
+elif view == METRICS_VIEW_LABEL:
+    render_metrics_page()
 else:
     upload_tab, synthetic_tab = st.tabs(["Production upload", "Synthetic library"])
 
     with upload_tab:
         st.caption(
-            "Production mode: uploads are analyzed directly against the policy taxonomy. "
+            "Production mode: uploads are reviewed by live moderation agents against the policy taxonomy. "
             "Do not upload illegal material; Tier-1 signals are routed to human review without detailed automated analysis."
         )
         upload = st.file_uploader(
@@ -134,7 +207,9 @@ else:
                 content_type=upload.type,
                 payload=upload.getvalue(),
             )
-            result = run_case(selected_case, db_path=DEFAULT_DB_PATH)
+            with st.status("Moderation agents are reviewing the upload...", expanded=False) as status:
+                result = run_case(selected_case, db_path=DEFAULT_DB_PATH)
+                status.update(label="Review complete", state="complete")
             render_result(result)
 
     with synthetic_tab:

@@ -4,13 +4,14 @@ import json
 import re
 from pathlib import Path
 
-from sentinel.config import UPLOADS_DIR
+from sentinel.config import EVAL_RUNS_DIR, UPLOADS_DIR
 from sentinel.models import Case, ModerationLog
 from sentinel.tools.media_utils import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, VIDEO_EXTENSIONS
 
 
 MODERATION_VIEW_LABEL = "Moderation"
 LOG_VIEW_LABEL = "Logs"
+METRICS_VIEW_LABEL = "Metrics"
 
 FLOW_STAGES = [
     "Ingest upload",
@@ -124,6 +125,72 @@ def build_uploaded_case(
             "upload_content_type": content_type or "",
         },
     )
+
+
+def describe_trace_event(event: str) -> tuple[str, str]:
+    """Map a raw pipeline trace entry to an (icon, human-readable text) pair."""
+    if event.startswith("ingest:"):
+        return "📥", f"Case ingested: {event.split(':', 1)[1]}"
+    if event.startswith("orchestrator.detect_asset_type:"):
+        return "🧭", f"Modality detected: {event.rsplit(':', 1)[1]}"
+    if event == "production_analysis:enabled":
+        return "⚡", "Live agent analysis enabled"
+    if event.startswith("handoff:senior-reviewer:in-run"):
+        return "🔀", "Specialist handed off to Senior Reviewer during the run"
+    if event == "handoff:senior-reviewer":
+        return "🔼", "Escalated to Senior Reviewer"
+    if event.startswith("handoff:"):
+        return "🧭", f"Routed to {event.split(':', 1)[1].replace('-', ' ')}"
+    if event.startswith("agent.evidence:"):
+        return "🧾", f"Evidence prepared ({event.split(':', 1)[1].removeprefix('evidence:')})"
+    if event.startswith("agent.agent_run:"):
+        _, name, model = event.split(":", 2)
+        return "🤖", f"{name} agent started ({model})"
+    if event.startswith("agent.tool_call:"):
+        _, agent, tool = event.split(":", 2)
+        return "🔧", f"{agent} called {tool}"
+    if event.startswith("agent.handoff:"):
+        return "🔀", f"Agent handoff: {event.split(':', 1)[1].replace('->', ' → ')}"
+    if event.startswith("agent.verdict_drafted:"):
+        return "📝", f"{event.split(':', 1)[1]} drafted a verdict"
+    if event.startswith("agent.guardrail.tier1.tripwire:"):
+        return "🚨", f"Tier-1 guardrail halted the agent mid-run ({event.rsplit(':', 1)[1]})"
+    if event == "guardrail.tier1.triggered":
+        return "🚨", "Tier-1 safety rail engaged: automated adjudication bypassed"
+    if event.startswith("hash_match.flag:"):
+        return "#️⃣", f"Known-hash list check: {'match' if event.endswith('True') else 'no match'}"
+    if event.startswith("specialist.verdict:"):
+        _, decision, clause = event.split(":", 2)
+        return "⚖️", f"Specialist verdict: {decision} under {clause}"
+    if event.startswith("senior.verdict:"):
+        _, decision, clause = event.split(":", 2)
+        return "⚖️", f"Senior verdict: {decision} under {clause}"
+    if event == "human_ticket.created":
+        return "🎫", "Human review ticket created"
+    if event.startswith("ticket.external:jira:"):
+        return "🟦", f"Jira issue created: {event.rsplit(':', 1)[1]}"
+    if event == "ticket.external:local-only":
+        return "🎫", "Ticket kept local (Jira not configured or unavailable)"
+    if event == "quarantine.completed":
+        return "🔒", "Content quarantined"
+    if event.startswith("agent.agent_runtime.error:"):
+        return "⚠️", f"Agent runtime error — failed closed to review ({event.rsplit(':', 1)[1]})"
+    return "•", event
+
+
+def list_eval_runs(eval_dir: str | Path = EVAL_RUNS_DIR) -> list[Path]:
+    root = Path(eval_dir)
+    if not root.exists():
+        return []
+    return sorted(
+        (path for path in root.iterdir() if path.is_dir() and (path / "results.json").exists()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+
+
+def load_eval_run(run_dir: str | Path) -> dict:
+    return json.loads((Path(run_dir) / "results.json").read_text(encoding="utf-8"))
 
 
 def build_production_uploaded_case(

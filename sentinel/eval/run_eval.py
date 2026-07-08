@@ -28,13 +28,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sentinel.agents.orchestrator import run_case
-from sentinel.config import PROJECT_ROOT
+from sentinel.config import EVAL_RUNS_DIR
 from sentinel.models import Case, CaseResult
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import TIER1_CATEGORIES
 
 OUTCOMES = ("allow", "reject", "escalate")
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "sentinel" / "eval_runs"
+DEFAULT_OUTPUT_DIR = EVAL_RUNS_DIR
 
 
 @dataclass(frozen=True)
