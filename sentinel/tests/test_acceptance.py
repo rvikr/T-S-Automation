@@ -148,8 +148,8 @@ class SentinelAcceptanceTests(unittest.TestCase):
         manifest = PROJECT_ROOT / "sentinel" / "data" / "synthetic_cases" / "manifest.json"
         cases = json.loads(manifest.read_text(encoding="utf-8"))
 
-        self.assertGreaterEqual(len(cases), 15)
-        self.assertLessEqual(len(cases), 20)
+        self.assertGreaterEqual(len(cases), 30)
+        self.assertLessEqual(len(cases), 45)
         self.assertTrue(any(case["category"] == "Child Exploitation" for case in cases))
         self.assertTrue(any(case["category"] == "Terrorism & Violent Extremism" for case in cases))
         self.assertTrue(

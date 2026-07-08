@@ -142,5 +142,149 @@
     "category": "Sensitive Events",
     "expected_decision": "ambiguous",
     "label": "synthetic sensitive event reference with unclear context"
+  },
+  {
+    "id": "txt-benign-001",
+    "asset_type": "text",
+    "asset_file": "txt-benign-001.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: friendly greeting about a new game level"
+  },
+  {
+    "id": "txt-benign-002",
+    "asset_type": "text",
+    "asset_file": "txt-benign-002.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: patch notes announcement"
+  },
+  {
+    "id": "img-benign-002",
+    "asset_type": "image",
+    "asset_file": "img-benign-002.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: screenshot of a build showcase"
+  },
+  {
+    "id": "vid-benign-002",
+    "asset_type": "video",
+    "asset_file": "vid-benign-002.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: tutorial gameplay clip"
+  },
+  {
+    "id": "aud-benign-002",
+    "asset_type": "audio",
+    "asset_file": "aud-benign-002.synthetic",
+    "category": "No Violation",
+    "expected_decision": "allow",
+    "label": "benign synthetic placeholder: strategy voice chat"
+  },
+  {
+    "id": "txt-harass-amb-002",
+    "asset_type": "text",
+    "asset_file": "txt-harass-amb-002.synthetic",
+    "category": "Harassment & Discrimination",
+    "expected_decision": "ambiguous",
+    "label": "synthetic playful trash talk between teammates"
+  },
+  {
+    "id": "txt-political-amb-001",
+    "asset_type": "text",
+    "asset_file": "txt-political-amb-001.synthetic",
+    "category": "Political Content",
+    "expected_decision": "ambiguous",
+    "label": "synthetic unclear political persuasion reference"
+  },
+  {
+    "id": "txt-sensitive-amb-002",
+    "asset_type": "text",
+    "asset_file": "txt-sensitive-amb-002.synthetic",
+    "category": "Sensitive Events",
+    "expected_decision": "ambiguous",
+    "label": "synthetic borderline reference to a sensitive event"
+  },
+  {
+    "id": "img-selfharm-amb-001",
+    "asset_type": "image",
+    "asset_file": "img-selfharm-amb-001.synthetic",
+    "category": "Suicide/Self-Injury",
+    "expected_decision": "ambiguous",
+    "label": "synthetic ambiguous self-injury awareness image label"
+  },
+  {
+    "id": "vid-offplatform-amb-001",
+    "asset_type": "video",
+    "asset_file": "vid-offplatform-amb-001.synthetic",
+    "category": "Off-Platform Directing",
+    "expected_decision": "ambiguous",
+    "label": "synthetic unclear invitation to continue chat elsewhere"
+  },
+  {
+    "id": "txt-profanity-001",
+    "asset_type": "text",
+    "asset_file": "txt-profanity-001.synthetic",
+    "category": "Profanity",
+    "expected_decision": "reject",
+    "label": "synthetic explicit profanity string label"
+  },
+  {
+    "id": "img-sexual-001",
+    "asset_type": "image",
+    "asset_file": "img-sexual-001.synthetic",
+    "category": "Romantic/Sexual Content",
+    "expected_decision": "reject",
+    "label": "synthetic sexualized content label, no depiction"
+  },
+  {
+    "id": "vid-scam-001",
+    "asset_type": "video",
+    "asset_file": "vid-scam-001.synthetic",
+    "category": "Cheating & Scams",
+    "expected_decision": "reject",
+    "label": "synthetic free currency scam video label"
+  },
+  {
+    "id": "txt-advertising-001",
+    "asset_type": "text",
+    "asset_file": "txt-advertising-001.synthetic",
+    "category": "Advertising",
+    "expected_decision": "reject",
+    "label": "synthetic unapproved advertising solicitation"
+  },
+  {
+    "id": "img-spam-001",
+    "asset_type": "image",
+    "asset_file": "img-spam-001.synthetic",
+    "category": "Spam",
+    "expected_decision": "reject",
+    "label": "synthetic repeated promotional overlay label"
+  },
+  {
+    "id": "txt-misuse-001",
+    "asset_type": "text",
+    "asset_file": "txt-misuse-001.synthetic",
+    "category": "System Misuse",
+    "expected_decision": "reject",
+    "label": "synthetic exploit automation instructions label"
+  },
+  {
+    "id": "tier1-child-standin-002",
+    "asset_type": "text",
+    "asset_file": "tier1-child-standin-002.synthetic",
+    "category": "Child Exploitation",
+    "expected_decision": "allow",
+    "label": "synthetic tier-1 stand-in label only for child safety routing"
+  },
+  {
+    "id": "tier1-terror-standin-002",
+    "asset_type": "audio",
+    "asset_file": "tier1-terror-standin-002.synthetic",
+    "category": "Terrorism & Violent Extremism",
+    "expected_decision": "reject",
+    "label": "synthetic tier-1 stand-in label only for violent extremism routing"
   }
 ]
