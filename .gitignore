@@ -8,4 +8,6 @@ sentinel/db/*.sqlite
 sentinel/db/chroma/
 sentinel/data/uploads/
 sentinel/data/quarantine/
-sentinel/eval_runs/
+sentinel/eval_runs/*
+!sentinel/eval_runs/reference-offline/
+!sentinel/eval_runs/reference-live/

@@ -1,0 +1,266 @@
+{
+  "mode": "live",
+  "generated_at": "20260708T044326Z",
+  "metrics": {
+    "cases": 18,
+    "accuracy": 0.8333,
+    "tier1_recall": 1.0,
+    "benign_false_positive_rate": 0.0,
+    "escalation_rate": 0.5,
+    "per_class": {
+      "allow": {
+        "support": 2,
+        "precision": 0.6667,
+        "recall": 1.0,
+        "f1": 0.8
+      },
+      "reject": {
+        "support": 8,
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571
+      },
+      "escalate": {
+        "support": 8,
+        "precision": 0.7778,
+        "recall": 0.875,
+        "f1": 0.8235
+      }
+    },
+    "confusion_matrix": {
+      "allow": {
+        "allow": 2,
+        "reject": 0,
+        "escalate": 0
+      },
+      "reject": {
+        "allow": 0,
+        "reject": 6,
+        "escalate": 2
+      },
+      "escalate": {
+        "allow": 1,
+        "reject": 0,
+        "escalate": 7
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "txt-sexual-001",
+      "asset_type": "text",
+      "category": "Romantic/Sexual Content",
+      "expected_outcome": "reject",
+      "predicted_outcome": "escalate",
+      "final_decision": "reject",
+      "reviewer": "senior",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": false
+    },
+    {
+      "case_id": "txt-harass-amb-001",
+      "asset_type": "text",
+      "category": "Harassment & Discrimination",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "allow",
+      "reviewer": "senior",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-spam-001",
+      "asset_type": "text",
+      "category": "Spam",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-scam-001",
+      "asset_type": "text",
+      "category": "Cheating & Scams",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-pii-001",
+      "asset_type": "text",
+      "category": "Sharing Personal Info",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-offplatform-amb-001",
+      "asset_type": "text",
+      "category": "Off-Platform Directing",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "ambiguous",
+      "reviewer": "senior",
+      "ticket_id": "TKT-311BDAC0",
+      "quarantined": true,
+      "correct": true
+    },
+    {
+      "case_id": "txt-selfharm-amb-001",
+      "asset_type": "text",
+      "category": "Suicide/Self-Injury",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "ambiguous",
+      "reviewer": "senior",
+      "ticket_id": "TKT-8AE71539",
+      "quarantined": true,
+      "correct": true
+    },
+    {
+      "case_id": "txt-regulated-001",
+      "asset_type": "text",
+      "category": "Illegal & Regulated Goods",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-sensitive-amb-001",
+      "asset_type": "text",
+      "category": "Sensitive Events",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "ambiguous",
+      "reviewer": "senior",
+      "ticket_id": "TKT-EE2F585E",
+      "quarantined": true,
+      "correct": true
+    },
+    {
+      "case_id": "txt-benign-001",
+      "asset_type": "text",
+      "category": "No Violation",
+      "expected_outcome": "allow",
+      "predicted_outcome": "allow",
+      "final_decision": "allow",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-benign-002",
+      "asset_type": "text",
+      "category": "No Violation",
+      "expected_outcome": "allow",
+      "predicted_outcome": "allow",
+      "final_decision": "allow",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-harass-amb-002",
+      "asset_type": "text",
+      "category": "Harassment & Discrimination",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "allow",
+      "final_decision": "allow",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": false
+    },
+    {
+      "case_id": "txt-political-amb-001",
+      "asset_type": "text",
+      "category": "Political Content",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "ambiguous",
+      "reviewer": "senior",
+      "ticket_id": "TKT-4C14EE41",
+      "quarantined": true,
+      "correct": true
+    },
+    {
+      "case_id": "txt-sensitive-amb-002",
+      "asset_type": "text",
+      "category": "Sensitive Events",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "allow",
+      "reviewer": "senior",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-profanity-001",
+      "asset_type": "text",
+      "category": "Profanity",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "txt-advertising-001",
+      "asset_type": "text",
+      "category": "Advertising",
+      "expected_outcome": "reject",
+      "predicted_outcome": "escalate",
+      "final_decision": "reject",
+      "reviewer": "senior",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": false
+    },
+    {
+      "case_id": "txt-misuse-001",
+      "asset_type": "text",
+      "category": "System Misuse",
+      "expected_outcome": "reject",
+      "predicted_outcome": "reject",
+      "final_decision": "reject",
+      "reviewer": "text-specialist",
+      "ticket_id": null,
+      "quarantined": false,
+      "correct": true
+    },
+    {
+      "case_id": "tier1-child-standin-002",
+      "asset_type": "text",
+      "category": "Child Exploitation",
+      "expected_outcome": "escalate",
+      "predicted_outcome": "escalate",
+      "final_decision": "ambiguous",
+      "reviewer": "human",
+      "ticket_id": "TKT-CA4C2955",
+      "quarantined": true,
+      "correct": true
+    }
+  ]
+}
