@@ -15,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 DATA_DIR = BASE_DIR / "data"
 SYNTHETIC_CASES_DIR = DATA_DIR / "synthetic_cases"
+DEMO_SAMPLES_DIR = DATA_DIR / "demo_samples"
 UPLOADS_DIR = DATA_DIR / "uploads"
 QUARANTINE_DIR = DATA_DIR / "quarantine"
 DB_DIR = BASE_DIR / "db"

@@ -250,10 +250,28 @@ def retrieve_precedents_tool(ctx: RunContextWrapper[Any], category: str) -> str:
         return "No precedent store is available for this run."
     if category in TIER1_CATEGORIES:
         return "Tier-1 categories never use precedents; they always route to human review."
-    precedents = retrieve_precedents_by_category(category, db_path)
+
+    # Prefer similarity ranking against the actual case under review; fall
+    # back to the most recent resolutions in the category.
+    strategy = "Most recent"
+    precedents: list[Precedent] = []
+    case = getattr(ctx.context, "case", None)
+    if case is not None:
+        query_case = Case(
+            id=case.id,
+            asset_type=case.asset_type,
+            asset_path=case.asset_path,
+            metadata={**case.metadata, "expected_category": category},
+        )
+        precedents = retrieve_precedents(query_case, db_path)
+        if precedents:
+            strategy = "Similarity-ranked"
+    if not precedents:
+        precedents = retrieve_precedents_by_category(category, db_path)
     if not precedents:
         return f"No stored precedents for category '{category}'."
-    return "\n".join(
+    header = f"{strategy} precedents for '{category}':"
+    return header + "\n" + "\n".join(
         f"Precedent #{precedent.id}: resolved '{precedent.verdict}' under {precedent.clause}. {precedent.rationale[:220]}"
         for precedent in precedents
     )

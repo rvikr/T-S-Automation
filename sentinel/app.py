@@ -13,7 +13,7 @@ import streamlit as st
 
 from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
-from sentinel.config import DEFAULT_DB_PATH, SYNTHETIC_CASES_DIR
+from sentinel.config import DEFAULT_DB_PATH, DEMO_SAMPLES_DIR, SYNTHETIC_CASES_DIR
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import get_clause_for_category
@@ -138,6 +138,28 @@ def render_result(result) -> None:
 # Committed, clearly-labeled text stand-in (no depiction) — the same case the
 # reference live eval scored with Tier-1 recall 1.0.
 TIER1_DEMO_ASSET = SYNTHETIC_CASES_DIR / "tier1-child-standin-002.synthetic"
+
+# Committed benign media so the multimodal claim is one click, not a file hunt.
+DEMO_SAMPLES = [
+    ("🖼️ Try the sample image", "sample-image.png", "image/png"),
+    ("🎙️ Try the sample voice note", "sample-audio.wav", "audio/wav"),
+    ("🎬 Try the sample video", "sample-video.mp4", "video/mp4"),
+]
+
+
+def render_demo_samples() -> None:
+    st.markdown("**Or moderate a bundled sample** — every modality in one click:")
+    sample_columns = st.columns(len(DEMO_SAMPLES))
+    for column, (label, filename, mime) in zip(sample_columns, DEMO_SAMPLES):
+        sample_path = DEMO_SAMPLES_DIR / filename
+        if sample_path.exists() and column.button(label, key=f"sample-{filename}"):
+            production_case = build_production_uploaded_case(
+                name=filename,
+                content_type=mime,
+                payload=sample_path.read_bytes(),
+            )
+            result = run_case_with_live_status(production_case)
+            render_result(result)
 
 
 def render_tier1_demo() -> None:
@@ -292,6 +314,9 @@ else:
             )
             result = run_case_with_live_status(selected_case)
             render_result(result)
+
+        st.divider()
+        render_demo_samples()
 
         st.divider()
         render_tier1_demo()
