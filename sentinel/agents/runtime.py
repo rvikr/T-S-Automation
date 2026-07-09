@@ -109,7 +109,8 @@ _SHARED_RULES = (
     "3. Ground every verdict in the policy corpus: call retrieve_policy_tool with a description of the "
     "observed signal before deciding, and put the clause ids you relied on in cited_clauses.\n"
     "4. Before deciding a non-obvious case, call retrieve_precedents_tool with your candidate category "
-    "to check how senior or human reviewers resolved similar cases.\n"
+    "to check how senior or human reviewers resolved similar cases. Call it at most once, for your "
+    "single most likely category — do not sweep multiple categories.\n"
     "5. Use category 'No Violation' with decision 'allow' when no policy category applies.\n\n"
     "Decision guide:\n"
     "- Tier-3 categories: reject when the violation is clear.\n"
@@ -362,7 +363,8 @@ def run_specialist_case(case: Case, db_path: str | Path | None = None, client: A
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
-    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, _usage_fields(result))
+    usage = {**_usage_fields(result), "usage_model": settings.specialist_model}
+    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, usage)
 
 
 def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | None = None) -> ProductionAssessment:
@@ -401,4 +403,5 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
-    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, _usage_fields(result))
+    usage = {**_usage_fields(result), "usage_model": settings.senior_model}
+    return _assessment_from_output(result.final_output, _reviewer_chain(result), events, usage)

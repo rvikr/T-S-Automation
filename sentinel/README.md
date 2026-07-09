@@ -98,7 +98,7 @@ python -m sentinel.eval.run_eval          # offline, deterministic, no network
 python -m sentinel.eval.run_eval --live   # real agents on the text golden set
 ```
 
-Each run writes `results.json` + `report.md` under `sentinel/eval_runs/`. The golden set is 36 labeled synthetic cases across all four modalities (`sentinel/data/synthetic_cases/manifest.json`). Offline mode scores all 36 deterministically; `--live` scores the 18 **text** cases (the image/audio/video entries are labeled text placeholders — pass `--live-all` to force every modality through the live agents). Reports include latency (mean/p95), token totals, and a per-modality table. Reference live run (committed under `eval_runs/reference-live/`): **83.3% outcome accuracy, 100% Tier-1 recall, 0% benign false positives** on the 18 live-scored text cases.
+Each run writes `results.json` + `report.md` under `sentinel/eval_runs/`. The golden set is 36 labeled synthetic cases across all four modalities (`sentinel/data/synthetic_cases/manifest.json`). Offline mode scores all 36 deterministically; `--live` scores the 18 **text** cases (the image/audio/video entries are labeled text placeholders — pass `--live-all` to force every modality through the live agents). Reports include latency (mean/p95), token totals, a per-modality table, and an estimated cost per case at published per-token rates — a live-moderated text case costs on the order of **$0.002**, versus **$0.50–$2.00** typical for human review. Reference live run (committed under `eval_runs/reference-live/`): **83.3% outcome accuracy, 100% Tier-1 recall, 0% benign false positives** on the 18 live-scored text cases.
 
 ## API
 

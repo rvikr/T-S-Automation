@@ -32,6 +32,7 @@ from sentinel.config import EVAL_RUNS_DIR
 from sentinel.models import Case, CaseResult
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import TIER1_CATEGORIES
+from sentinel.ui_uploads import estimate_cost_usd
 
 OUTCOMES = ("allow", "reject", "escalate")
 DEFAULT_OUTPUT_DIR = EVAL_RUNS_DIR
@@ -51,6 +52,7 @@ class CaseScore:
     correct: bool
     latency_ms: int = 0
     total_tokens: int = 0
+    est_cost_usd: float = 0.0
 
 
 def expected_outcome(case: Case) -> str:
@@ -86,6 +88,7 @@ def score_case(case: Case, result: CaseResult) -> CaseScore:
         # result.case is the case that actually ran (a label-free copy in live mode).
         latency_ms=int(result.case.metadata.get("latency_ms", 0) or 0),
         total_tokens=int((result.case.metadata.get("token_usage") or {}).get("total_tokens", 0) or 0),
+        est_cost_usd=round(estimate_cost_usd(result.case.metadata.get("token_usage")) or 0.0, 6),
     )
 
 
@@ -146,6 +149,8 @@ def compute_metrics(scores: list[CaseScore]) -> dict:
         "escalation_rate": round(len(escalated) / len(scores), 4) if scores else None,
         "latency_ms": _latency_stats(scores),
         "total_tokens": sum(s.total_tokens for s in scores),
+        "est_cost_usd_total": round(sum(s.est_cost_usd for s in scores), 4),
+        "est_cost_usd_mean": round(sum(s.est_cost_usd for s in scores) / len(scores), 6) if scores else None,
         "per_class": per_class,
         "confusion_matrix": confusion,
         "per_modality": _per_modality(scores),
@@ -226,6 +231,11 @@ def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode:
         lines.append(f"- Latency per case: mean **{latency['mean']} ms**, p95 **{latency['p95']} ms**")
     if metrics.get("total_tokens"):
         lines.append(f"- Total tokens: **{metrics['total_tokens']:,}**")
+    if metrics.get("est_cost_usd_total"):
+        lines.append(
+            f"- Estimated cost: **${metrics['est_cost_usd_total']:.4f}** total, "
+            f"**${metrics['est_cost_usd_mean']:.4f}** mean per case (published per-token rates)"
+        )
     lines += [
         "",
         "## Per-outcome precision / recall / F1",

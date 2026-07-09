@@ -26,6 +26,7 @@ from sentinel.ui_uploads import (
     build_production_uploaded_case,
     describe_live_event,
     describe_trace_event,
+    estimate_cost_usd,
     format_moderation_log_rows,
     list_eval_runs,
     load_eval_run,
@@ -92,6 +93,9 @@ def render_verdict_card(result) -> None:
             perf[1].metric("Tokens (total)", f"{usage.get('total_tokens', 0):,}")
             perf[2].metric("Tokens in / out", f"{usage.get('input_tokens', 0):,} / {usage.get('output_tokens', 0):,}")
             perf[3].metric("LLM requests", usage.get("requests", 0))
+        cost = estimate_cost_usd(usage)
+        if cost is not None:
+            st.caption(f"Est. cost this case: **${cost:.4f}** (at published per-token rates)")
 
     clause = get_clause_for_category(verdict.category)
     st.markdown(f"**Policy clause:** `{verdict.policy_clause}`")
@@ -240,9 +244,11 @@ def render_metrics_page() -> None:
     latency = metrics.get("latency_ms")
     if latency:
         tokens = metrics.get("total_tokens", 0)
+        cost_mean = metrics.get("est_cost_usd_mean")
         st.caption(
             f"⏱️ Latency per case: mean {latency['mean']} ms, p95 {latency['p95']} ms"
             + (f" · 🔢 total tokens {tokens:,}" if tokens else "")
+            + (f" · 💲 est. ${cost_mean:.4f}/case at published rates" if cost_mean else "")
         )
 
     per_modality = metrics.get("per_modality")

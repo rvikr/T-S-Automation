@@ -32,6 +32,30 @@ OPENAI_TRACES_URL_TEMPLATE = "https://platform.openai.com/traces/trace?trace_id=
 def openai_trace_url(trace_id: str) -> str:
     return OPENAI_TRACES_URL_TEMPLATE.format(trace_id=trace_id)
 
+
+# Published API prices (USD per 1M input/output tokens) as of July 2026.
+# Used only for the clearly-labeled per-case cost estimate.
+MODEL_PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+}
+_UNKNOWN_MODEL_PRICE = (2.50, 10.00)  # price unknown models at the senior rate (upper bound)
+
+
+def estimate_cost_usd(token_usage: dict | None) -> float | None:
+    """Estimated case cost from per-model token counts; None when unavailable."""
+    if not token_usage:
+        return None
+    by_model = token_usage.get("by_model")
+    if not by_model:
+        return None
+    total = 0.0
+    for model, entry in by_model.items():
+        input_rate, output_rate = MODEL_PRICES_PER_MTOK.get(model, _UNKNOWN_MODEL_PRICE)
+        total += int(entry.get("input_tokens", 0) or 0) / 1_000_000 * input_rate
+        total += int(entry.get("output_tokens", 0) or 0) / 1_000_000 * output_rate
+    return total
+
 DEMO_POLICY_SIGNALS = {
     "Benign upload": ("No Violation", "allow", "benign synthetic demo upload"),
     "Clear reject": (

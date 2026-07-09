@@ -46,6 +46,7 @@ class ProductionAssessment:
     usage_input_tokens: int = 0
     usage_output_tokens: int = 0
     usage_total_tokens: int = 0
+    usage_model: str = ""
 
 
 @dataclass(frozen=True)

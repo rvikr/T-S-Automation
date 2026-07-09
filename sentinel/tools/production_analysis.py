@@ -81,6 +81,11 @@ def _record_agent_metadata(case: Case, assessment: ProductionAssessment) -> None
         usage["input_tokens"] += int(assessment.usage_input_tokens or 0)
         usage["output_tokens"] += int(assessment.usage_output_tokens or 0)
         usage["total_tokens"] += int(assessment.usage_total_tokens or 0)
+        model = str(getattr(assessment, "usage_model", "") or "unknown")
+        by_model = usage.setdefault("by_model", {})
+        entry = by_model.setdefault(model, {"input_tokens": 0, "output_tokens": 0})
+        entry["input_tokens"] += int(assessment.usage_input_tokens or 0)
+        entry["output_tokens"] += int(assessment.usage_output_tokens or 0)
 
 
 def _agents_sdk_available() -> bool:
