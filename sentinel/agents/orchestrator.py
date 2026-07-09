@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 
 try:
@@ -147,6 +148,17 @@ def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseRe
         _write_case_audit(case, final_verdict, db_path)
         trace.append("quarantine.completed")
         return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
+
+    if "agent.guardrail.input.injection" in trace:
+        # The upload tried to manipulate the moderator. Straight to a human
+        # ticket — never re-run another agent over the same hostile input.
+        trace.append("guardrail.input.triggered")
+        final_verdict = replace(specialist_verdict, decision="ambiguous", reviewer="human")
+        ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
+        trace.append("human_ticket.created")
+        ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
+        _write_case_audit(case, final_verdict, db_path)
+        return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket)
 
     if specialist_verdict.decision == "ambiguous":
         if specialist_verdict.reviewer == "senior":

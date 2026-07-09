@@ -163,6 +163,10 @@ def describe_trace_event(event: str) -> tuple[str, str]:
         return "📝", f"{event.split(':', 1)[1]} drafted a verdict"
     if event.startswith("agent.guardrail.tier1.tripwire:"):
         return "🚨", f"Tier-1 guardrail halted the agent mid-run ({event.rsplit(':', 1)[1]})"
+    if event == "agent.guardrail.input.injection":
+        return "🛡️", "Input guardrail: manipulation attempt detected before adjudication"
+    if event == "guardrail.input.triggered":
+        return "🛡️", "Injection screen engaged: routed to human review, agents never adjudicated"
     if event == "guardrail.tier1.triggered":
         return "🚨", "Tier-1 safety rail engaged: automated adjudication bypassed"
     if event.startswith("hash_match.flag:"):

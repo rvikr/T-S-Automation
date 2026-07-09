@@ -20,11 +20,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agents import Agent, ModelSettings, RunHooks, Runner
-from agents.exceptions import OutputGuardrailTripwireTriggered
+from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
 
 from sentinel.agents import live_events
 from sentinel.config import Settings, load_settings
-from sentinel.guardrails import tier1_output_guardrail
+from sentinel.guardrails import injection_input_guardrail, tier1_output_guardrail
 from sentinel.models import Case, ProductionAssessment, Verdict
 from sentinel.tools.hash_match import hash_match_tool
 from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category, retrieve_policy_tool
@@ -159,6 +159,7 @@ def build_senior_agent(settings: Settings) -> Agent[ModerationContext]:
         model=settings.senior_model,
         model_settings=ModelSettings(temperature=0.1),
         output_type=AssessmentOutput,
+        input_guardrails=[injection_input_guardrail],
         output_guardrails=[tier1_output_guardrail],
     )
 
@@ -172,6 +173,7 @@ def build_specialist_agent(asset_type: str, senior: Agent[ModerationContext], se
         model=settings.specialist_model,
         model_settings=ModelSettings(temperature=0.1),
         output_type=AssessmentOutput,
+        input_guardrails=[injection_input_guardrail],
         output_guardrails=[tier1_output_guardrail],
     )
 
@@ -277,6 +279,21 @@ def _reviewer_chain(result: Any) -> list[str]:
     return chain
 
 
+def _injection_tripwire_assessment(events: list[str]) -> ProductionAssessment:
+    return ProductionAssessment(
+        decision="ambiguous",
+        category="No Violation",
+        confidence=0.99,
+        rationale=(
+            "Input guardrail detected an attempt to manipulate the moderator; "
+            "routed to human review without adjudication."
+        ),
+        evidence_summary="Prompt-injection screen tripped before adjudication.",
+        reviewer_chain=["guardrail"],
+        agent_events=events + ["guardrail.input.injection"],
+    )
+
+
 def _tier1_tripwire_assessment(exc: OutputGuardrailTripwireTriggered, events: list[str]) -> ProductionAssessment:
     info = getattr(getattr(getattr(exc, "guardrail_result", None), "output", None), "output_info", None) or {}
     category = str(info.get("category", "")) if isinstance(info, dict) else ""
@@ -341,6 +358,8 @@ def run_specialist_case(case: Case, db_path: str | Path | None = None, client: A
     events.append(f"agent_run:{specialist.name}:{settings.specialist_model}")
     try:
         result = Runner.run_sync(specialist, input_items, context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
+    except InputGuardrailTripwireTriggered:
+        return _injection_tripwire_assessment(events)
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
@@ -378,6 +397,8 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
     events.append(f"agent_run:{senior.name}:{settings.senior_model}")
     try:
         result = Runner.run_sync(senior, input_items + [escalation_note], context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
+    except InputGuardrailTripwireTriggered:
+        return _injection_tripwire_assessment(events)
     except OutputGuardrailTripwireTriggered as exc:
         return _tier1_tripwire_assessment(exc, events + ["usage:unavailable:guardrail-halt"])
     events.extend(_extract_events(result))
