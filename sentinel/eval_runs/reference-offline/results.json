@@ -1,12 +1,19 @@
 {
   "mode": "offline",
-  "generated_at": "20260708T044011Z",
+  "generated_at": "20260709T051134Z",
   "metrics": {
     "cases": 36,
     "accuracy": 1.0,
     "tier1_recall": 1.0,
     "benign_false_positive_rate": 0.0,
     "escalation_rate": 0.3611,
+    "latency_ms": {
+      "mean": 13,
+      "p95": 19
+    },
+    "total_tokens": 0,
+    "est_cost_usd_total": 0.0,
+    "est_cost_usd_mean": 0.0,
     "per_class": {
       "allow": {
         "support": 8,
@@ -43,6 +50,40 @@
         "reject": 0,
         "escalate": 13
       }
+    },
+    "per_modality": {
+      "audio": {
+        "cases": 4,
+        "accuracy": 1.0,
+        "escalation_rate": 0.25,
+        "mean_latency_ms": 12,
+        "p95_latency_ms": 18,
+        "mean_tokens": 0
+      },
+      "image": {
+        "cases": 8,
+        "accuracy": 1.0,
+        "escalation_rate": 0.25,
+        "mean_latency_ms": 12,
+        "p95_latency_ms": 19,
+        "mean_tokens": 0
+      },
+      "text": {
+        "cases": 18,
+        "accuracy": 1.0,
+        "escalation_rate": 0.4444,
+        "mean_latency_ms": 14,
+        "p95_latency_ms": 20,
+        "mean_tokens": 0
+      },
+      "video": {
+        "cases": 6,
+        "accuracy": 1.0,
+        "escalation_rate": 0.3333,
+        "mean_latency_ms": 13,
+        "p95_latency_ms": 19,
+        "mean_tokens": 0
+      }
     }
   },
   "cases": [
@@ -56,7 +97,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-gore-001",
@@ -68,7 +112,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-sexual-001",
@@ -80,7 +127,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 13,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-harass-amb-001",
@@ -92,7 +142,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 17,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-spam-001",
@@ -104,7 +157,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-scam-001",
@@ -116,7 +172,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-pii-001",
@@ -128,7 +187,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-offplatform-amb-001",
@@ -140,7 +202,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 19,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "aud-profanity-001",
@@ -152,7 +217,10 @@
       "reviewer": "audio-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "aud-benign-001",
@@ -164,7 +232,10 @@
       "reviewer": "audio-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "vid-gore-001",
@@ -176,7 +247,10 @@
       "reviewer": "video-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "vid-benign-001",
@@ -188,7 +262,10 @@
       "reviewer": "video-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "tier1-child-standin-001",
@@ -198,9 +275,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "human",
-      "ticket_id": "TKT-FFCA3893",
+      "ticket_id": "TKT-15D2353E",
       "quarantined": true,
-      "correct": true
+      "correct": true,
+      "latency_ms": 19,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "tier1-terror-standin-001",
@@ -210,9 +290,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "human",
-      "ticket_id": "TKT-8D753F0A",
+      "ticket_id": "TKT-20D2D103",
       "quarantined": true,
-      "correct": true
+      "correct": true,
+      "latency_ms": 19,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-selfharm-amb-001",
@@ -224,7 +307,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 20,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-regulated-001",
@@ -236,7 +322,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-ip-001",
@@ -248,7 +337,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-sensitive-amb-001",
@@ -260,7 +352,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 17,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-benign-001",
@@ -272,7 +367,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-benign-002",
@@ -284,7 +382,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-benign-002",
@@ -296,7 +397,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "vid-benign-002",
@@ -308,7 +412,10 @@
       "reviewer": "video-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "aud-benign-002",
@@ -320,7 +427,10 @@
       "reviewer": "audio-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-harass-amb-002",
@@ -332,7 +442,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 17,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-political-amb-001",
@@ -344,7 +457,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 17,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-sensitive-amb-002",
@@ -356,7 +472,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 19,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-selfharm-amb-001",
@@ -368,7 +487,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 18,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "vid-offplatform-amb-001",
@@ -380,7 +502,10 @@
       "reviewer": "senior",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 19,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-profanity-001",
@@ -392,7 +517,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 11,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-sexual-001",
@@ -404,7 +532,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "vid-scam-001",
@@ -416,7 +547,10 @@
       "reviewer": "video-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-advertising-001",
@@ -428,7 +562,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 9,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "img-spam-001",
@@ -440,7 +577,10 @@
       "reviewer": "image-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 11,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "txt-misuse-001",
@@ -452,7 +592,10 @@
       "reviewer": "text-specialist",
       "ticket_id": null,
       "quarantined": false,
-      "correct": true
+      "correct": true,
+      "latency_ms": 10,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "tier1-child-standin-002",
@@ -462,9 +605,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "human",
-      "ticket_id": "TKT-E2EB885A",
+      "ticket_id": "TKT-92513413",
       "quarantined": true,
-      "correct": true
+      "correct": true,
+      "latency_ms": 20,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     },
     {
       "case_id": "tier1-terror-standin-002",
@@ -474,9 +620,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "human",
-      "ticket_id": "TKT-B6B2B4A0",
+      "ticket_id": "TKT-7822E3AE",
       "quarantined": true,
-      "correct": true
+      "correct": true,
+      "latency_ms": 18,
+      "total_tokens": 0,
+      "est_cost_usd": 0.0
     }
   ]
 }

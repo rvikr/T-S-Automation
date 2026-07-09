@@ -45,8 +45,8 @@ From the committed golden-set evaluation (`sentinel/eval_runs/reference-live/`, 
 
 - **Tier-1 recall: 100%** (the invariant — never missed, never adjudicated by AI)
 - **Benign false-positive rate: 0%**
-- **Outcome accuracy: 83%+** against T&S-labeled outcomes (allow / reject / escalate)
-- **~$0.002 estimated cost per live text case** at published per-token rates, seconds of latency — versus **$0.50–$2.00 and hours-to-days** for human-queue review
+- **Outcome accuracy: 88.9%** against T&S-labeled outcomes — and every miss was an *over-escalation to human review*, never under-enforcement
+- **$0.002 estimated cost per live text case** at published per-token rates, ~7 s mean latency — versus **$0.50–$2.00 and hours-to-days** for human-queue review
 
 ## Run it in 3 commands
 
