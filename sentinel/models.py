@@ -6,6 +6,11 @@ from typing import Any, Literal
 
 Decision = Literal["allow", "reject", "ambiguous"]
 
+# Metadata key caching prepared Responses-API input (may hold large base64
+# data-URLs). The senior run reuses it; the orchestrator must pop it before
+# the case is serialized into results, logs, or API responses.
+EVIDENCE_CACHE_KEY = "_evidence_input"
+
 
 @dataclass(frozen=True)
 class Case:

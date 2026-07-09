@@ -145,10 +145,10 @@ def describe_trace_event(event: str) -> tuple[str, str]:
         return "⚡", "Live agent analysis enabled"
     if event.startswith("handoff:senior-reviewer:in-run"):
         return "🔀", "Specialist handed off to Senior Reviewer during the run"
-    if event == "handoff:senior-reviewer":
-        return "🔼", "Escalated to Senior Reviewer"
-    if event.startswith("handoff:"):
-        return "🧭", f"Routed to {event.split(':', 1)[1].replace('-', ' ')}"
+    if event == "route:senior-reviewer":
+        return "🔼", "Rails escalated to Senior Reviewer (deterministic policy invariant)"
+    if event.startswith("route:"):
+        return "🧭", f"Dispatched to {event.split(':', 1)[1].replace('-', ' ')} (deterministic routing)"
     if event.startswith("agent.evidence:"):
         return "🧾", f"Evidence prepared ({event.split(':', 1)[1].removeprefix('evidence:')})"
     if event.startswith("agent.agent_run:"):

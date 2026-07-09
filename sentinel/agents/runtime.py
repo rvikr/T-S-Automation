@@ -13,7 +13,7 @@ the AI can neither create nor skip an escalation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,7 +25,7 @@ from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTr
 from sentinel.agents import live_events
 from sentinel.config import Settings, load_settings
 from sentinel.guardrails import injection_input_guardrail, tier1_output_guardrail
-from sentinel.models import Case, ProductionAssessment, Verdict
+from sentinel.models import EVIDENCE_CACHE_KEY, Case, ProductionAssessment, Verdict
 from sentinel.tools.hash_match import hash_match_tool
 from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category, retrieve_policy_tool
 from sentinel.tools.precedent_memory import retrieve_precedents_tool
@@ -33,7 +33,6 @@ from sentinel.tools.precedent_memory import retrieve_precedents_tool
 
 MAX_TEXT_CHARS = 12000
 MAX_AGENT_TURNS = 10
-_EVIDENCE_CACHE_KEY = "_evidence_input"
 
 
 @dataclass
@@ -230,12 +229,12 @@ def _prepare_input(case: Case, client: Any) -> tuple[list[dict[str, Any]] | None
 
 
 def _get_or_prepare_input(case: Case, client: Any) -> tuple[list[dict[str, Any]] | None, list[str]]:
-    cached = case.metadata.get(_EVIDENCE_CACHE_KEY)
+    cached = case.metadata.get(EVIDENCE_CACHE_KEY)
     if cached is not None:
         return cached, []
     input_items, events = _prepare_input(case, client)
     if input_items is not None:
-        case.metadata[_EVIDENCE_CACHE_KEY] = input_items
+        case.metadata[EVIDENCE_CACHE_KEY] = input_items
     return input_items, events
 
 

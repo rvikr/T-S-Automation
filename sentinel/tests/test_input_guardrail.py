@@ -85,7 +85,9 @@ class InjectionRoutingTests(unittest.TestCase):
         self.assertIn("agent.guardrail.input.injection", result.trace)
         self.assertIn("guardrail.input.triggered", result.trace)
         # No senior re-run over the same hostile input.
-        self.assertNotIn("handoff:senior-reviewer", result.trace)
+        self.assertNotIn("route:senior-reviewer", result.trace)
+        # The evidence cache never leaks into serialized metadata.
+        self.assertNotIn("_evidence_input", case.metadata)
 
 
 if __name__ == "__main__":

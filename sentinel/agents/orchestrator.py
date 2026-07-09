@@ -15,7 +15,7 @@ from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
 from sentinel.agents.senior_reviewer import review_case as senior_review
 from sentinel.config import DEFAULT_DB_PATH, load_settings
 from sentinel.guardrails import check_tier1_guardrail
-from sentinel.models import BatchResult, Case, CaseResult, Verdict
+from sentinel.models import EVIDENCE_CACHE_KEY, BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
 from sentinel.tools.hash_match import hash_match, known_hash_match
 from sentinel.tools.media_utils import detect_asset_type, quarantine
@@ -30,15 +30,15 @@ def _dispatch(case: Case, db_path: str | Path, trace: list[str]) -> Verdict:
     if case.metadata.get("analysis_mode") == "production":
         trace.append("production_analysis:enabled")
     if asset_type == "image":
-        trace.append("handoff:image-agent")
+        trace.append("route:image-agent")
         return image_agent.review_case(case, db_path)
     if asset_type == "audio":
-        trace.append("handoff:audio-agent")
+        trace.append("route:audio-agent")
         return audio_agent.review_case(case, db_path)
     if asset_type == "video":
-        trace.append("handoff:video-agent")
+        trace.append("route:video-agent")
         return video_agent.review_case(case, db_path)
-    trace.append("handoff:text-agent")
+    trace.append("route:text-agent")
     return text_agent.review_case(case, db_path)
 
 
@@ -125,6 +125,9 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
                 return _run_case_inner(case, db_path, trace)
         return _run_case_inner(case, db_path, trace)
     finally:
+        # Pop after both agent passes (the senior run reuses the cache) and
+        # before the case object is serialized anywhere.
+        case.metadata.pop(EVIDENCE_CACHE_KEY, None)
         # `trace` is the same list the CaseResult holds, so this lands in the result.
         latency_ms = round((time.perf_counter() - started) * 1000)
         case.metadata["latency_ms"] = latency_ms
@@ -166,7 +169,7 @@ def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseRe
             trace.append("handoff:senior-reviewer:in-run")
             final_verdict = specialist_verdict
         else:
-            trace.append("handoff:senior-reviewer")
+            trace.append("route:senior-reviewer")
             final_verdict = senior_review(case, specialist_verdict, db_path)
             _drain_agent_events(case, trace)
         trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
