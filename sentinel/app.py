@@ -7,9 +7,16 @@ _this_dir = Path(__file__).resolve().parent
 sys.path[:] = [p for p in sys.path if Path(p).resolve() != _this_dir]
 sys.path.insert(0, str(_this_dir.parent))
 
+import os
 from dataclasses import asdict
 
 import streamlit as st
+
+try:
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(str(_key), str(_value))
+except FileNotFoundError:
+    pass
 
 from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
