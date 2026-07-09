@@ -13,7 +13,7 @@ import streamlit as st
 
 from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
-from sentinel.config import DEFAULT_DB_PATH
+from sentinel.config import DEFAULT_DB_PATH, SYNTHETIC_CASES_DIR
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import get_clause_for_category
@@ -133,6 +133,31 @@ def render_result(result) -> None:
     with st.expander("Raw verdict and trace"):
         st.json(asdict(result.verdict))
         st.json({"trace": result.trace})
+
+
+# Committed, clearly-labeled text stand-in (no depiction) — the same case the
+# reference live eval scored with Tier-1 recall 1.0.
+TIER1_DEMO_ASSET = SYNTHETIC_CASES_DIR / "tier1-child-standin-002.synthetic"
+
+
+def render_tier1_demo() -> None:
+    with st.container(border=True):
+        st.markdown("**🚨 Tier-1 guardrail demo** — the line AI must not cross")
+        st.caption(
+            "One click runs a committed, clearly-labeled Tier-1 stand-in through the live agents. "
+            "The SDK output guardrail halts the run mid-flight, the upload is quarantined, and a "
+            "human review ticket is opened (mirrored to Jira when configured). The agents have no "
+            "ticketing tool, so the AI cannot skip the escalation. Requires OPENAI_API_KEY; "
+            "offline, run the same case from the Synthetic library tab."
+        )
+        if st.button("Run the Tier-1 guardrail demo", key="run-tier1-demo"):
+            production_case = build_production_uploaded_case(
+                name="tier1-guardrail-demo.txt",
+                content_type="text/plain",
+                payload=TIER1_DEMO_ASSET.read_bytes(),
+            )
+            result = run_case_with_live_status(production_case)
+            render_result(result)
 
 
 def render_learning_metric(cases) -> None:
@@ -267,6 +292,9 @@ else:
             )
             result = run_case_with_live_status(selected_case)
             render_result(result)
+
+        st.divider()
+        render_tier1_demo()
 
     with synthetic_tab:
         st.caption("Synthetic labeled cases remain available for safe demos and regression checks.")
