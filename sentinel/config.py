@@ -61,6 +61,13 @@ MAX_UPLOAD_BYTES: int = int(os.getenv("SENTINEL_MAX_UPLOAD_BYTES", str(25 * 1024
 # Seconds SQLite waits on a locked database before raising.
 SQLITE_BUSY_TIMEOUT: float = float(os.getenv("SENTINEL_SQLITE_BUSY_TIMEOUT", "30"))
 
+# When no model adjudicates a production upload (no credentials, or the call
+# failed) every case fails closed to an escalation — so mirroring those to Jira
+# opens one real issue per request for verdicts nobody produced. Off by default;
+# set to 1 to mirror anyway. The local ticket is written either way, so an
+# escalation is never lost regardless of this setting.
+MIRROR_UNADJUDICATED_TO_JIRA: bool = os.getenv("SENTINEL_JIRA_MIRROR_UNADJUDICATED", "").strip() in {"1", "true", "yes"}
+
 
 @dataclass(frozen=True)
 class Settings:

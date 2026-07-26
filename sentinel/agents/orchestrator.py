@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - SDK installed in normal setup
 
 from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
 from sentinel.agents.senior_reviewer import review_case as senior_review
-from sentinel.config import DEFAULT_DB_PATH, load_settings
+from sentinel.config import DEFAULT_DB_PATH, MIRROR_UNADJUDICATED_TO_JIRA, load_settings
 from sentinel.guardrails import check_tier1_guardrail
 from sentinel.models import EVIDENCE_CACHE_KEY, BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
@@ -141,8 +141,34 @@ def _drain_agent_events(case: Case, trace: list[str]) -> None:
         trace.append(f"agent.{event}")
 
 
+# Agent events meaning no model actually classified the content: credentials
+# absent, or the call failed. Both leave the verdict at "No Violation / tier 0"
+# while the rails still escalate, so the escalation is real but the *verdict*
+# carries no information worth filing externally.
+_UNADJUDICATED_EVENT_MARKERS = ("production_analysis.unavailable", "agent_runtime.error:")
+
+
+def _was_adjudicated(case: Case, trace: list[str]) -> bool:
+    """True when a model actually classified this content.
+
+    Synthetic runs count as adjudicated — their labels drive genuine verdicts and
+    the offline Tier-1 demo legitimately mirrors to Jira. This is specifically
+    about production uploads whose model call never happened or failed.
+    """
+    if case.metadata.get("analysis_mode") != "production":
+        return True
+    return not any(marker in event for event in trace for marker in _UNADJUDICATED_EVENT_MARKERS)
+
+
 def _escalate_ticket(case: Case, verdict: Verdict, ticket, db_path: str | Path, trace: list[str]):
     """Mirror the local ticket to Jira when configured; local ticket is never lost."""
+    if not MIRROR_UNADJUDICATED_TO_JIRA and not _was_adjudicated(case, trace):
+        # Without a working model *every* production upload escalates, so
+        # mirroring here opens a Jira issue per request — benign content
+        # included — for a verdict no model produced. Skip the external mirror
+        # only; the local ticket below still records the escalation.
+        trace.append("ticket.external:skipped-unadjudicated")
+        return ticket
     external = create_jira_issue(ticket, case, verdict)
     if external is None:
         trace.append("ticket.external:local-only")
