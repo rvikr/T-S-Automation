@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+import sqlite3
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,15 +21,51 @@ from sentinel.guardrails import check_tier1_guardrail
 from sentinel.models import EVIDENCE_CACHE_KEY, BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
 from sentinel.tools.hash_match import hash_match, known_hash_match
-from sentinel.tools.media_utils import detect_asset_type, quarantine
+from sentinel.tools.media_utils import ASSET_TYPE_MISMATCH_KEY, detect_asset_type, quarantine
 from sentinel.tools.jira_client import create_jira_issue
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.ticketing import attach_external_reference, create_human_ticket
 
+logger = logging.getLogger(__name__)
+
+
+def _asset_type_mismatch_verdict(case: Case, mismatch: dict) -> Verdict:
+    """Fail closed when the declared asset type contradicts the file's bytes.
+
+    A disagreement here is an evasion signal in its own right — the most direct
+    way to keep image or video content away from a vision-capable agent is to
+    label it as text. We route to a human without spending an LLM call rather
+    than silently re-routing, so the attempt is visible in the audit trail.
+    """
+    clause = get_clause_for_category("No Violation")
+    return Verdict(
+        case_id=case.id,
+        decision="ambiguous",
+        severity_tier=clause.tier,
+        category="No Violation",
+        policy_clause=clause.citation,
+        confidence=1.0,
+        rationale=(
+            f"Declared asset type '{mismatch['declared']}' contradicts detected content type "
+            f"'{mismatch['detected']}'. Automated adjudication bypassed and routed to human review."
+        ),
+        reviewer="human",
+    )
+
 
 def _dispatch(case: Case, db_path: str | Path, trace: list[str]) -> Verdict:
-    asset_type = detect_asset_type(case.asset_path, {"asset_type": case.asset_type})
+    probe: dict = {"asset_type": case.asset_type}
+    asset_type = detect_asset_type(case.asset_path, probe)
     trace.append(f"orchestrator.detect_asset_type:{asset_type}")
+
+    mismatch = probe.get(ASSET_TYPE_MISMATCH_KEY)
+    if mismatch:
+        case.metadata[ASSET_TYPE_MISMATCH_KEY] = mismatch
+        trace.append(
+            f"guardrail.asset_type_mismatch:declared={mismatch['declared']},detected={mismatch['detected']}"
+        )
+        return _asset_type_mismatch_verdict(case, mismatch)
+
     if case.metadata.get("analysis_mode") == "production":
         trace.append("production_analysis:enabled")
     if asset_type == "image":
@@ -70,12 +109,31 @@ def _human_only_verdict(case: Case, source_verdict: Verdict) -> Verdict:
 
 
 def _write_case_audit(case: Case, verdict: Verdict, db_path: str | Path):
-    return write_audit(
-        verdict,
-        db_path,
-        api_key_id=case.metadata.get("api_key_id"),
-        tenant_name=case.metadata.get("tenant_name"),
-    )
+    """Persist the audit row, but never let its failure discard an escalation.
+
+    Audit writes happen *after* quarantine and ticket creation have already
+    committed. Letting a transient SQLite lock propagate here would surface as a
+    failed request even though the content was correctly quarantined and
+    escalated — the caller would likely retry, double-ticketing. A missing audit
+    row is the lesser harm, provided it is loud.
+    """
+    try:
+        return write_audit(
+            verdict,
+            db_path,
+            api_key_id=case.metadata.get("api_key_id"),
+            tenant_name=case.metadata.get("tenant_name"),
+            run_id=case.metadata.get("moderation_run_id"),
+        )
+    except sqlite3.Error:
+        logger.exception(
+            "Audit write failed for case %s (verdict=%s, category=%s); "
+            "enforcement already applied, audit row missing",
+            case.id,
+            verdict.decision,
+            verdict.category,
+        )
+        return None
 
 
 def _drain_agent_events(case: Case, trace: list[str]) -> None:
@@ -109,6 +167,7 @@ def _tracing_enabled(case: Case) -> bool:
 
 def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
     init_db(db_path)
+    case.metadata["moderation_run_id"] = uuid.uuid4().hex
     trace: list[str] = [f"ingest:{case.id}"]
     started = time.perf_counter()
     try:
@@ -134,61 +193,95 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
         trace.append(f"latency:{latency_ms}ms")
 
 
+def _handle_tier1_guardrail(
+    case: Case, verdict: Verdict, db_path: str | Path, trace: list[str]
+) -> CaseResult:
+    """Quarantine, ticket, and return for Tier-1 triggered cases."""
+    trace.append("guardrail.tier1.triggered")
+    trace.append(f"hash_match.flag:{hash_match(case) or known_hash_match(case.asset_path)}")
+    quarantined = quarantine(case)
+    final_verdict = _human_only_verdict(case, verdict)
+    ticket = create_human_ticket(case, 1, verdict.category, db_path)
+    trace.append("human_ticket.created")
+    ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
+    _write_case_audit(case, final_verdict, db_path)
+    trace.append("quarantine.completed")
+    return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
+
+
+def _handle_direct_human_escalation(
+    case: Case, verdict: Verdict, db_path: str | Path, trace: list[str], reason: str = "guardrail.input.triggered"
+) -> CaseResult:
+    """Ticket straight to a human without re-running any agent.
+
+    Used for inputs that are hostile or untrustworthy in themselves — prompt
+    injection, or a declared asset type that contradicts the file's bytes. In
+    both cases a second adjudication pass would be re-reading attacker-chosen
+    input, and a lenient outcome from it would undo the rail that fired.
+    """
+    trace.append(reason)
+    final_verdict = replace(verdict, decision="ambiguous", reviewer="human")
+    ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
+    trace.append("human_ticket.created")
+    ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
+    _write_case_audit(case, final_verdict, db_path)
+    return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket)
+
+
+def _handle_ambiguous_escalation(
+    case: Case, specialist_verdict: Verdict, db_path: str | Path, trace: list[str]
+) -> CaseResult:
+    """Escalate an ambiguous specialist verdict to the senior reviewer."""
+    if specialist_verdict.reviewer == "senior":
+        # The specialist already handed off to the senior agent inside the run.
+        trace.append("handoff:senior-reviewer:in-run")
+        final_verdict = specialist_verdict
+    else:
+        trace.append("route:senior-reviewer")
+        final_verdict = senior_review(case, specialist_verdict, db_path)
+        _drain_agent_events(case, trace)
+    trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
+    if final_verdict.decision == "ambiguous":
+        ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
+        trace.append("human_ticket.created")
+        ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
+        quarantined = quarantine(case)
+        _write_case_audit(case, final_verdict, db_path)
+        return CaseResult(
+            case=case,
+            verdict=final_verdict,
+            trace=trace,
+            ticket=ticket,
+            quarantined=quarantined,
+            warning_message=_warning(final_verdict),
+        )
+    _write_case_audit(case, final_verdict, db_path)
+    return CaseResult(case=case, verdict=final_verdict, trace=trace, warning_message=_warning(final_verdict))
+
+
 def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseResult:
     specialist_verdict = _dispatch(case, db_path, trace)
     _drain_agent_events(case, trace)
     trace.append(f"specialist.verdict:{specialist_verdict.decision}:{specialist_verdict.policy_clause}")
 
-    guardrail = check_tier1_guardrail(specialist_verdict)
-    if guardrail.triggered:
-        trace.append("guardrail.tier1.triggered")
-        trace.append(f"hash_match.flag:{hash_match(case) or known_hash_match(case.asset_path)}")
-        quarantined = quarantine(case)
-        final_verdict = _human_only_verdict(case, specialist_verdict)
-        ticket = create_human_ticket(case, 1, specialist_verdict.category, db_path)
-        trace.append("human_ticket.created")
-        ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
-        _write_case_audit(case, final_verdict, db_path)
-        trace.append("quarantine.completed")
-        return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket, quarantined=quarantined)
+    if check_tier1_guardrail(specialist_verdict).triggered:
+        return _handle_tier1_guardrail(case, specialist_verdict, db_path, trace)
 
     if "agent.guardrail.input.injection" in trace:
         # The upload tried to manipulate the moderator. Straight to a human
         # ticket — never re-run another agent over the same hostile input.
-        trace.append("guardrail.input.triggered")
-        final_verdict = replace(specialist_verdict, decision="ambiguous", reviewer="human")
-        ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
-        trace.append("human_ticket.created")
-        ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
-        _write_case_audit(case, final_verdict, db_path)
-        return CaseResult(case=case, verdict=final_verdict, trace=trace, ticket=ticket)
+        return _handle_direct_human_escalation(case, specialist_verdict, db_path, trace)
+
+    if ASSET_TYPE_MISMATCH_KEY in case.metadata:
+        # The declared type contradicted the bytes. Handing this to the senior
+        # reviewer would just re-adjudicate it — and a senior "allow" would undo
+        # the rail. Ticket it for a human directly, as with prompt injection.
+        return _handle_direct_human_escalation(
+            case, specialist_verdict, db_path, trace, reason="guardrail.asset_type_mismatch.triggered"
+        )
 
     if specialist_verdict.decision == "ambiguous":
-        if specialist_verdict.reviewer == "senior":
-            # The specialist already handed off to the senior agent inside the run.
-            trace.append("handoff:senior-reviewer:in-run")
-            final_verdict = specialist_verdict
-        else:
-            trace.append("route:senior-reviewer")
-            final_verdict = senior_review(case, specialist_verdict, db_path)
-            _drain_agent_events(case, trace)
-        trace.append(f"senior.verdict:{final_verdict.decision}:{final_verdict.policy_clause}")
-        if final_verdict.decision == "ambiguous":
-            ticket = create_human_ticket(case, final_verdict.severity_tier, final_verdict.category, db_path)
-            trace.append("human_ticket.created")
-            ticket = _escalate_ticket(case, final_verdict, ticket, db_path, trace)
-            quarantined = quarantine(case)
-            _write_case_audit(case, final_verdict, db_path)
-            return CaseResult(
-                case=case,
-                verdict=final_verdict,
-                trace=trace,
-                ticket=ticket,
-                quarantined=quarantined,
-                warning_message=_warning(final_verdict),
-            )
-        _write_case_audit(case, final_verdict, db_path)
-        return CaseResult(case=case, verdict=final_verdict, trace=trace, warning_message=_warning(final_verdict))
+        return _handle_ambiguous_escalation(case, specialist_verdict, db_path, trace)
 
     _write_case_audit(case, specialist_verdict, db_path)
     return CaseResult(case=case, verdict=specialist_verdict, trace=trace, warning_message=_warning(specialist_verdict))

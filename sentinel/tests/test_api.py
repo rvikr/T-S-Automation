@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from sentinel.models import ProductionAssessment
+from sentinel.models import ApiKeyRecord, ProductionAssessment
 from sentinel.tools.audit_log import init_db
 
 
@@ -123,6 +123,25 @@ class ModerationApiTests(unittest.TestCase):
         self.assertEqual(logs[0]["case_id"], "jira-999")
         self.assertTrue(logs[0]["escalation_triggered"])
         self.assertEqual(logs[0]["escalation_details"]["ticket"]["status"], "open")
+
+    def test_uploads_are_isolated_and_media_defaults_have_valid_types(self):
+        api = importlib.import_module("sentinel.api")
+        key_a = ApiKeyRecord("key_a", "Tenant A", "Project", "test", "sent_test", "active", "now")
+        key_b = ApiKeyRecord("key_b", "Tenant B", "Project", "test", "sent_test", "active", "now")
+        request = api.ModerationRequest(
+            case_id="shared-case",
+            asset_type="image",
+            content_base64="aW1hZ2UtYnl0ZXM=",
+        )
+
+        first = api._build_case_from_request(request, self.base_path / "uploads", key_a)
+        second = api._build_case_from_request(request, self.base_path / "uploads", key_b)
+
+        self.assertNotEqual(first.asset_path, second.asset_path)
+        self.assertEqual(Path(first.asset_path).suffix, ".png")
+        self.assertEqual(first.metadata["upload_content_type"], "image/png")
+        self.assertEqual(Path(first.asset_path).read_bytes(), b"image-bytes")
+        self.assertEqual(Path(second.asset_path).read_bytes(), b"image-bytes")
 
 
 if __name__ == "__main__":

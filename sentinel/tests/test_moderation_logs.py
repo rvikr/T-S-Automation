@@ -86,6 +86,33 @@ class ModerationLogTests(unittest.TestCase):
         self.assertEqual(logs_by_case["human-tier1"].escalation_details["ticket"]["status"], "open")
         self.assertEqual(logs_by_case["human-tier1"].escalation_details["ticket"]["severity"], 1)
 
+    def test_reused_case_id_does_not_attach_new_ticket_to_old_audit(self):
+        safe = make_case(
+            self.base_path,
+            "reused-id",
+            "text",
+            "No Violation",
+            "friendly text",
+            "allow",
+        )
+        run_case(safe, db_path=self.db_path)
+        tier1 = make_case(
+            self.base_path,
+            "reused-id",
+            "text",
+            "Child Exploitation",
+            "synthetic tier-1 stand-in label only",
+            "ambiguous",
+        )
+        run_case(tier1, db_path=self.db_path)
+
+        logs = [log for log in audit_log.list_moderation_logs(self.db_path) if log.case_id == "reused-id"]
+
+        self.assertEqual(len(logs), 2)
+        self.assertTrue(logs[0].escalation_triggered)
+        self.assertFalse(logs[1].escalation_triggered)
+        self.assertIsNone(logs[1].escalation_type)
+
 
 if __name__ == "__main__":
     unittest.main()

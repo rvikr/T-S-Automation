@@ -1,3 +1,12 @@
+"""API key lifecycle management for Sentinel.
+
+Handles creation, hashing (SHA-256), validation, listing, and revocation of
+tenant API keys. Each key is stored as a hash only — the plaintext is returned
+once on creation and never persisted.
+
+Key format: ``sk-<env>-<random_hex>``
+"""
+
 from __future__ import annotations
 
 import hashlib

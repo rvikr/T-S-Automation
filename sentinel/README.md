@@ -140,7 +140,7 @@ python sentinel/main.py --case-id tier1-child-standin-001          # Tier-1 rout
 python -m pytest sentinel/tests -q
 ```
 
-28 tests, fully offline: acceptance flows, production-path mapping, API + key auth, Jira escalation (mocked transport), input-guardrail screening + routing, log formatting, UI helpers. A conftest fixture scrubs `JIRA_*` and `OPENAI_API_KEY` from the environment so test runs can never open real issues, call the API, or export traces.
+123 tests, fully offline: acceptance flows, production-path mapping, API + key auth, Jira escalation (mocked transport), input-guardrail screening + routing, log formatting, UI helpers, plus the adversarial paths — asset-type spoofing, non-canonical category labels, model-call failures, and upload size limits. A conftest fixture scrubs `JIRA_*` and `OPENAI_API_KEY` from the environment so test runs can never open real issues, call the API, or export traces.
 
 ## Demo script (3 minutes)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sentinel.models import Case, Verdict
+from sentinel.models import Case, Verdict, build_verdict
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.precedent_memory import retrieve_precedents
 
@@ -45,12 +45,10 @@ def specialist_review(case: Case, reviewer: str, db_path: str | Path) -> Verdict
         decision = "allow"
         confidence = 0.95
         rationale = "Synthetic benign label has no policy violation signal."
-    return Verdict(
+    return build_verdict(
         case_id=case.id,
-        decision=decision,  # type: ignore[arg-type]
-        severity_tier=clause.tier,
+        decision=decision,
         category=category,
-        policy_clause=clause.citation,
         confidence=confidence,
         rationale=rationale,
         reviewer=reviewer,

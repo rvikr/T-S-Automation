@@ -13,6 +13,7 @@ the AI can neither create nor skip an escalation.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -22,17 +23,26 @@ from pydantic import BaseModel, Field
 from agents import Agent, ModelSettings, RunHooks, Runner
 from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
 
+try:
+    from agents import set_default_openai_client
+except ImportError:  # pragma: no cover - older SDK without the setter
+    set_default_openai_client = None
+
 from sentinel.agents import live_events
-from sentinel.config import Settings, load_settings
+from sentinel.config import AGENT_TEMPERATURE, MAX_AGENT_TURNS, MAX_TEXT_CHARS, Settings, load_settings
 from sentinel.guardrails import injection_input_guardrail, tier1_output_guardrail
 from sentinel.models import EVIDENCE_CACHE_KEY, Case, ProductionAssessment, Verdict
 from sentinel.tools.hash_match import hash_match_tool
-from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category, retrieve_policy_tool
+from sentinel.tools.policy_retrieval import (
+    POLICY_CLAUSES,
+    TIER1_CATEGORIES,
+    get_clause_for_category,
+    normalize_category,
+    retrieve_policy_tool,
+)
 from sentinel.tools.precedent_memory import retrieve_precedents_tool
 
-
-MAX_TEXT_CHARS = 12000
-MAX_AGENT_TURNS = 10
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -157,7 +167,7 @@ def build_senior_agent(settings: Settings) -> Agent[ModerationContext]:
         instructions=_senior_instructions(),
         tools=[retrieve_policy_tool, retrieve_precedents_tool, hash_match_tool],
         model=settings.senior_model,
-        model_settings=ModelSettings(temperature=0.1),
+        model_settings=ModelSettings(temperature=AGENT_TEMPERATURE),
         output_type=AssessmentOutput,
         input_guardrails=[injection_input_guardrail],
         output_guardrails=[tier1_output_guardrail],
@@ -171,61 +181,87 @@ def build_specialist_agent(asset_type: str, senior: Agent[ModerationContext], se
         tools=[retrieve_policy_tool, retrieve_precedents_tool, hash_match_tool],
         handoffs=[senior],
         model=settings.specialist_model,
-        model_settings=ModelSettings(temperature=0.1),
+        model_settings=ModelSettings(temperature=AGENT_TEMPERATURE),
         output_type=AssessmentOutput,
         input_guardrails=[injection_input_guardrail],
         output_guardrails=[tier1_output_guardrail],
     )
 
 
+def _prepare_image_input(
+    case: Case, pa: Any
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build Responses-API input items for an image asset."""
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": "Moderate this uploaded image against the policy taxonomy."},
+        {"type": "input_image", "image_url": pa._data_url(case.asset_path, case.metadata.get("upload_content_type"))},
+    ]
+    return content, ["evidence:image"]
+
+
+def _prepare_audio_input(
+    case: Case, client: Any, pa: Any
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Build Responses-API input items for an audio asset (transcription)."""
+    transcript = pa.transcribe_audio_asset(case, client)
+    events = [f"evidence:audio-transcript:{len(transcript)}chars"]
+    if not transcript.strip():
+        return None, events
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": f"Moderate this audio upload. Transcript:\n{transcript[:MAX_TEXT_CHARS]}"}
+    ]
+    return content, events
+
+
+def _prepare_video_input(
+    case: Case, client: Any, pa: Any
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Build Responses-API input items for a video asset (frames + transcript)."""
+    frames = pa.sample_video_frame_data_urls(case.asset_path)
+    transcript = pa.extract_video_audio_transcript(case, client)
+    events = [f"evidence:video-frames:{len(frames)}"]
+    if transcript:
+        events.append(f"evidence:video-transcript:{len(transcript)}chars")
+    if not frames and not transcript:
+        return None, events
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": "Moderate this uploaded video using the sampled frames and any extracted transcript."}
+    ]
+    content.extend({"type": "input_image", "image_url": frame} for frame in frames)
+    if transcript:
+        content.append({"type": "input_text", "text": f"Extracted audio transcript:\n{transcript[:MAX_TEXT_CHARS]}"})
+    return content, events
+
+
+def _prepare_text_input(
+    case: Case, pa: Any
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Build Responses-API input items for a text asset."""
+    text = pa.read_text_asset(case)
+    events = [f"evidence:text:{len(text)}chars"]
+    if not text.strip():
+        return None, events
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": f"Moderate this text upload:\n\n{text[:MAX_TEXT_CHARS]}"}
+    ]
+    return content, events
+
+
 def _prepare_input(case: Case, client: Any) -> tuple[list[dict[str, Any]] | None, list[str]]:
-    """Build Responses-API input items from the asset; returns (input_items, evidence_events)."""
+    """Dispatch to the per-modality helper; returns (input_items, evidence_events)."""
     from sentinel.tools import production_analysis as pa
 
-    events: list[str] = []
-    content: list[dict[str, Any]] = []
     if case.asset_type == "image":
-        content = [
-            {"type": "input_text", "text": "Moderate this uploaded image against the policy taxonomy."},
-            {"type": "input_image", "image_url": pa._data_url(case.asset_path, case.metadata.get("upload_content_type"))},
-        ]
-        events.append("evidence:image")
+        content, events = _prepare_image_input(case, pa)
     elif case.asset_type == "audio":
-        transcript = pa.transcribe_audio_asset(case, client)
-        events.append(f"evidence:audio-transcript:{len(transcript)}chars")
-        if not transcript.strip():
-            return None, events
-        content = [
-            {
-                "type": "input_text",
-                "text": f"Moderate this audio upload. Transcript:\n{transcript[:MAX_TEXT_CHARS]}",
-            }
-        ]
+        content, events = _prepare_audio_input(case, client, pa)
     elif case.asset_type == "video":
-        frames = pa.sample_video_frame_data_urls(case.asset_path)
-        transcript = pa.extract_video_audio_transcript(case, client)
-        events.append(f"evidence:video-frames:{len(frames)}")
-        if transcript:
-            events.append(f"evidence:video-transcript:{len(transcript)}chars")
-        if not frames and not transcript:
-            return None, events
-        content = [
-            {
-                "type": "input_text",
-                "text": "Moderate this uploaded video using the sampled frames and any extracted transcript.",
-            }
-        ]
-        content.extend({"type": "input_image", "image_url": frame} for frame in frames)
-        if transcript:
-            content.append(
-                {"type": "input_text", "text": f"Extracted audio transcript:\n{transcript[:MAX_TEXT_CHARS]}"}
-            )
+        content, events = _prepare_video_input(case, client, pa)
     else:
-        text = pa.read_text_asset(case)
-        events.append(f"evidence:text:{len(text)}chars")
-        if not text.strip():
-            return None, events
-        content = [{"type": "input_text", "text": f"Moderate this text upload:\n\n{text[:MAX_TEXT_CHARS]}"}]
+        content, events = _prepare_text_input(case, pa)
+
+    if content is None:
+        return None, events
     return [{"role": "user", "content": content}], events
 
 
@@ -327,9 +363,19 @@ def _usage_fields(result: Any) -> dict[str, int]:
 def _assessment_from_output(
     output: AssessmentOutput, chain: list[str], events: list[str], usage: dict[str, int] | None = None
 ) -> ProductionAssessment:
-    category = output.category if output.category in POLICY_CLAUSES else "No Violation"
+    resolved = normalize_category(output.category)
+    decision = output.decision
+    if resolved is None:
+        # Fail closed: an unrecognised label must not be silently rewritten to a
+        # tier-0 "No Violation", which would bypass the Tier-1 rail downstream.
+        logger.warning("Agent returned unrecognised category %r; routing to human review", output.category)
+        category = "No Violation"
+        if decision != "allow":
+            decision = "ambiguous"
+    else:
+        category = resolved
     return ProductionAssessment(
-        decision=output.decision,
+        decision=decision,
         category=category,
         confidence=max(0.0, min(float(output.confidence), 1.0)),
         rationale=output.rationale,
@@ -341,12 +387,29 @@ def _assessment_from_output(
     )
 
 
+def _adopt_client_for_sdk(client: Any) -> None:
+    """Point the Agents SDK at our timeout-configured client.
+
+    ``Runner.run_sync`` otherwise builds its own default client with no timeout,
+    so the bounds set in ``_openai_client`` would apply to transcription and the
+    legacy path but silently not to agent runs — the calls that actually take
+    the longest.
+    """
+    if set_default_openai_client is None:
+        return
+    try:
+        set_default_openai_client(client)
+    except Exception:  # pragma: no cover - never let telemetry wiring fail a run
+        logger.warning("Could not set the Agents SDK default client; runs use SDK defaults", exc_info=True)
+
+
 def run_specialist_case(case: Case, db_path: str | Path | None = None, client: Any | None = None) -> ProductionAssessment:
     """Run the modality specialist agent (with senior handoff and Tier-1 tripwire) on a case."""
     from sentinel.tools.production_analysis import _openai_client
 
     settings = load_settings()
     client = client or _openai_client()
+    _adopt_client_for_sdk(client)
     input_items, events = _get_or_prepare_input(case, client)
     if input_items is None:
         return _no_evidence_assessment(case, events)
@@ -373,6 +436,7 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
 
     settings = load_settings()
     client = _openai_client()
+    _adopt_client_for_sdk(client)
     input_items, events = _get_or_prepare_input(case, client)
     if input_items is None:
         return _no_evidence_assessment(case, events)

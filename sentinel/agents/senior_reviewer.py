@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from sentinel.models import Case, Verdict
+from sentinel.models import Case, Verdict, build_verdict
 from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category
 from sentinel.tools.precedent_memory import write_precedent
+
+logger = logging.getLogger(__name__)
 
 
 def review_case(case: Case, initial_verdict: Verdict, db_path: str | Path) -> Verdict:
@@ -28,6 +31,7 @@ def _production_senior_review(case: Case, initial_verdict: Verdict, db_path: str
     try:
         assessment = run_senior_case(case, initial_verdict, db_path)
     except Exception as exc:
+        logger.exception("Senior agent runtime failed for case %s: %s", case.id, exc)
         return Verdict(
             case_id=case.id,
             decision="ambiguous",
@@ -52,13 +56,11 @@ def _production_senior_review(case: Case, initial_verdict: Verdict, db_path: str
         confidence = assessment.confidence
         rationale = assessment.rationale or f"Senior review resolved the case against {clause.citation}."
 
-    verdict = Verdict(
+    verdict = build_verdict(
         case_id=case.id,
-        decision=decision,  # type: ignore[arg-type]
-        severity_tier=clause.tier,
+        decision=decision,
         category=category,
-        policy_clause=clause.citation,
-        confidence=max(0.0, min(float(confidence), 1.0)),
+        confidence=confidence,
         rationale=rationale,
         reviewer="senior",
     )
@@ -85,12 +87,10 @@ def _synthetic_senior_review(case: Case, initial_verdict: Verdict, db_path: str 
         decision = initial_verdict.decision
         confidence = max(initial_verdict.confidence, 0.8)
         rationale = f"Senior review confirmed specialist match to {clause.citation}."
-    verdict = Verdict(
+    verdict = build_verdict(
         case_id=case.id,
-        decision=decision,  # type: ignore[arg-type]
-        severity_tier=clause.tier,
+        decision=decision,
         category=initial_verdict.category,
-        policy_clause=clause.citation,
         confidence=confidence,
         rationale=rationale,
         reviewer="senior",

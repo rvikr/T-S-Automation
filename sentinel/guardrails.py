@@ -1,3 +1,21 @@
+"""Sentinel safety guardrails.
+
+Two SDK tripwires are defined here:
+
+* :func:`injection_input_guardrail` — screens every agent input for
+  prompt-injection attempts (regex-based, zero latency, offline-testable).
+  Runs *before* the agent starts and routes hostile uploads straight to a
+  human ticket without adjudication.
+
+* :func:`tier1_output_guardrail` — halts any agent whose final output
+  lands in a Tier-1 category (child exploitation, terrorism/violent
+  extremism). The orchestrator then enforces quarantine + human ticket.
+
+Design note: these guardrails are intentionally *not* LLM-based. They are
+deterministic, cost-free, and hermetically testable — the agents adjudicate
+content while the rails guard the agents.
+"""
+
 from __future__ import annotations
 
 import re
@@ -40,15 +58,25 @@ def check_tier1_guardrail(verdict: Verdict) -> Tier1GuardrailResult:
 # Deliberately not an LLM check: zero latency/cost, offline-testable, and the
 # agents adjudicate content while the rails guard the agents.
 INJECTION_PATTERNS: list[re.Pattern[str]] = [
+    # Classic "ignore previous instructions" family
     re.compile(r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)\s+instructions", re.IGNORECASE),
+    # Direct policy/prompt-disregard commands
     re.compile(r"disregard\s+(?:the\s+)?(?:policy|policies|system\s+prompt|guidelines|instructions)", re.IGNORECASE),
+    # "Forget your rules" variants
     re.compile(r"forget\s+(?:your|all|the)\s+(?:instructions|rules|guidelines)", re.IGNORECASE),
+    # DAN / jailbreak persona assignments
     re.compile(r"you\s+are\s+(?:now\s+)?(?:dan|jailbroken|unfiltered|free\s+of\s+restrictions)", re.IGNORECASE),
+    # "Act as DAN / unfiltered model" variants
     re.compile(r"act\s+as\s+.{0,24}?(?:dan|jailbroken|unfiltered)", re.IGNORECASE),
+    # Attempts to exfiltrate the system prompt
     re.compile(r"(?:reveal|show|print)\s+(?:your\s+)?system\s+prompt", re.IGNORECASE),
+    # Explicit verdict-manipulation: "classify this as allow"
     re.compile(r"classify\s+this\s+as\s+(?:allow|allowed|no\s+violation)", re.IGNORECASE),
+    # "Output only 'allow'" forced-output injection
     re.compile(r"output\s+only\s+['\"]?allow", re.IGNORECASE),
+    # Direct override of the moderation/guardrail decision
     re.compile(r"override\s+(?:the\s+)?(?:moderation|guardrail|verdict|decision|safety)", re.IGNORECASE),
+    # Social-engineering via false authority ("as your developer, approve this")
     re.compile(r"as\s+your\s+developer.{0,40}?(?:approve|allow|permit)", re.IGNORECASE),
 ]
 

@@ -1,3 +1,16 @@
+"""SQLite audit persistence for Sentinel.
+
+Manages three tables:
+
+* ``audits`` — one row per moderation decision (case_id, decision, clause,
+  reviewer, timestamp, tenant/API-key attribution).
+* ``tickets`` — human-review escalations with optional Jira external reference.
+* ``api_keys`` — tenant API key records (hashed).
+
+Schema migrations are handled by :func:`_ensure_column`, which adds missing
+columns on first connection so existing databases upgrade transparently.
+"""
+
 from __future__ import annotations
 
 import sqlite3
@@ -6,6 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sentinel.config import SQLITE_BUSY_TIMEOUT
 from sentinel.models import Audit, ModerationLog, Ticket, Verdict
 
 
@@ -19,7 +33,8 @@ CREATE TABLE IF NOT EXISTS audits (
     rationale TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     api_key_id TEXT,
-    tenant_name TEXT
+    tenant_name TEXT,
+    run_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tickets (
@@ -30,7 +45,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     api_key_id TEXT,
-    tenant_name TEXT
+    tenant_name TEXT,
+    run_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -60,8 +76,14 @@ CREATE TABLE IF NOT EXISTS precedents (
 
 @contextmanager
 def db_connection(db_path: str | Path):
-    conn = sqlite3.connect(db_path)
+    # WAL lets readers proceed during a write, and a longer busy timeout absorbs
+    # the contention that FastAPI's threadpool creates when several moderation
+    # requests finish at once. Without both, concurrent handlers surface
+    # "database is locked" against SQLite's 5-second default.
+    conn = sqlite3.connect(db_path, timeout=SQLITE_BUSY_TIMEOUT)
     try:
+        conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_BUSY_TIMEOUT * 1000)}")
+        conn.execute("PRAGMA journal_mode = WAL")
         yield conn
         conn.commit()
     finally:
@@ -75,8 +97,10 @@ def init_db(db_path: str | Path) -> Path:
         conn.executescript(SCHEMA)
         _ensure_column(conn, "audits", "api_key_id", "TEXT")
         _ensure_column(conn, "audits", "tenant_name", "TEXT")
+        _ensure_column(conn, "audits", "run_id", "TEXT")
         _ensure_column(conn, "tickets", "api_key_id", "TEXT")
         _ensure_column(conn, "tickets", "tenant_name", "TEXT")
+        _ensure_column(conn, "tickets", "run_id", "TEXT")
         _ensure_column(conn, "tickets", "external_key", "TEXT")
         _ensure_column(conn, "tickets", "external_url", "TEXT")
     return path
@@ -97,14 +121,18 @@ def write_audit(
     db_path: str | Path,
     api_key_id: str | None = None,
     tenant_name: str | None = None,
+    run_id: str | None = None,
 ) -> Audit:
     init_db(db_path)
     timestamp = utc_now()
     with db_connection(db_path) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO audits (case_id, decision, clause, reviewer, rationale, timestamp, api_key_id, tenant_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO audits (
+                case_id, decision, clause, reviewer, rationale, timestamp,
+                api_key_id, tenant_name, run_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 verdict.case_id,
@@ -115,6 +143,7 @@ def write_audit(
                 timestamp,
                 api_key_id,
                 tenant_name,
+                run_id,
             ),
         )
         audit_id = int(cursor.lastrowid)
@@ -134,7 +163,7 @@ def fetch_audit_entries(db_path: str | Path) -> list[Audit]:
     with db_connection(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, case_id, decision, clause, reviewer, timestamp, rationale
+            SELECT id, case_id, decision, clause, reviewer, timestamp, rationale, run_id
             FROM audits
             ORDER BY id
             """
@@ -162,7 +191,7 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
     with db_connection(db_path) as conn:
         audit_rows = conn.execute(
             f"""
-            SELECT id, case_id, decision, clause, reviewer, timestamp, rationale
+            SELECT id, case_id, decision, clause, reviewer, timestamp, rationale, run_id
             FROM audits
             {audit_filter}
             ORDER BY id DESC
@@ -171,7 +200,8 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
         ).fetchall()
         ticket_rows = conn.execute(
             f"""
-            SELECT id, case_id, severity, category, status, created_at, external_key, external_url
+            SELECT id, case_id, severity, category, status, created_at,
+                   external_key, external_url, run_id
             FROM tickets
             {ticket_filter}
             ORDER BY created_at DESC
@@ -179,7 +209,8 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
             ticket_params,
         ).fetchall()
 
-    tickets_by_case: dict[str, Ticket] = {}
+    tickets_by_run: dict[str, Ticket] = {}
+    legacy_tickets_by_case: dict[str, Ticket] = {}
     for row in ticket_rows:
         ticket = Ticket(
             id=row[0],
@@ -191,7 +222,11 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
             external_key=row[6],
             external_url=row[7],
         )
-        tickets_by_case.setdefault(ticket.case_id, ticket)
+        ticket_run_id = row[8]
+        if ticket_run_id:
+            tickets_by_run.setdefault(ticket_run_id, ticket)
+        else:
+            legacy_tickets_by_case.setdefault(ticket.case_id, ticket)
 
     logs: list[ModerationLog] = []
     for row in audit_rows:
@@ -204,7 +239,12 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
             timestamp=row[5],
             rationale=row[6],
         )
-        ticket = tickets_by_case.get(audit.case_id)
+        audit_run_id = row[7]
+        ticket = (
+            tickets_by_run.get(audit_run_id)
+            if audit_run_id
+            else legacy_tickets_by_case.get(audit.case_id)
+        )
         escalation_type, escalation_details = _escalation_details(audit, ticket)
         logs.append(
             ModerationLog(

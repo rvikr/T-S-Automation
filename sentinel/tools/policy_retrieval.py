@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 try:
@@ -164,9 +165,55 @@ POLICY_CLAUSES: dict[str, PolicyClause] = {
 
 TIER1_CATEGORIES = {"Child Exploitation", "Terrorism & Violent Extremism"}
 
+# Models do not reliably reproduce taxonomy labels verbatim. An unrecognised
+# label previously collapsed to "No Violation" (tier 0), which meant a near-miss
+# on the *string* silently disarmed the Tier-1 rail for the most dangerous
+# categories in the taxonomy. Map the plausible aliases back onto the canonical
+# label; anything still unrecognised is handled by failing closed at the call
+# site rather than being treated as benign.
+CATEGORY_ALIASES: dict[str, str] = {
+    "csam": "Child Exploitation",
+    "csae": "Child Exploitation",
+    "child sexual abuse material": "Child Exploitation",
+    "child sexual abuse": "Child Exploitation",
+    "child sexual exploitation": "Child Exploitation",
+    "child exploitation material": "Child Exploitation",
+    "child safety": "Child Exploitation",
+    "child abuse": "Child Exploitation",
+    "minor safety": "Child Exploitation",
+    "terrorism": "Terrorism & Violent Extremism",
+    "violent extremism": "Terrorism & Violent Extremism",
+    "terrorism and violent extremism": "Terrorism & Violent Extremism",
+    "terrorism/violent extremism": "Terrorism & Violent Extremism",
+    "terrorist content": "Terrorism & Violent Extremism",
+    "extremism": "Terrorism & Violent Extremism",
+}
+
+
+def normalize_category(category: str) -> str | None:
+    """Resolve a model-supplied category to a canonical taxonomy label.
+
+    Returns ``None`` when the label cannot be resolved, so callers can decide how
+    to fail — deliberately *not* defaulting to ``"No Violation"`` here, because a
+    silent downgrade to tier 0 is exactly the failure mode this guards against.
+    """
+    if not category:
+        return None
+    if category in POLICY_CLAUSES:
+        return category
+
+    key = category.strip().lower()
+    for canonical in POLICY_CLAUSES:
+        if canonical.lower() == key:
+            return canonical
+    return CATEGORY_ALIASES.get(key)
+
 
 def get_clause_for_category(category: str) -> PolicyClause:
-    return POLICY_CLAUSES.get(category, POLICY_CLAUSES["No Violation"])
+    resolved = normalize_category(category)
+    if resolved is None:
+        return POLICY_CLAUSES["No Violation"]
+    return POLICY_CLAUSES[resolved]
 
 
 def retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
@@ -178,26 +225,97 @@ def retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
     return _keyword_retrieve_policy(query, limit)
 
 
+# Words that carry no policy signal. The previous implementation matched raw
+# query tokens as *substrings* of the clause text, so "is"/"to"/"in"/"me" hit
+# nearly every clause ("in" is inside "including", "to" inside "protect"). With
+# no scoring on top, results fell back to dict-insertion order — which put the
+# two Tier-1 clauses first for almost any query, handing the specialist agent
+# "Child Exploitation" as the most relevant policy for benign content.
+_STOPWORDS = frozenset(
+    """
+    the a an and or but if then than that this these those there here
+    is are was were be been being am do does did doing done
+    have has had having will would shall should can could may might must
+    for from with without within into onto upon about above below under over
+    out off across through during before after again once
+    not no nor only own same so too very just also
+    you your yours they them their our ours we us
+    who whom whose which what when where why how
+    all any both each few more most other some such
+    please help want need get got make made like
+    """.split()
+)
+
+# Longest clause-name token is what a query most plausibly names outright, so an
+# explicit category mention outranks any amount of incidental summary overlap.
+_CATEGORY_NAME_WEIGHT = 10
+_CATEGORY_TOKEN_WEIGHT = 3
+_PILLAR_TOKEN_WEIGHT = 2
+_SUMMARY_TOKEN_WEIGHT = 1
+
+
+def _stem(token: str) -> str:
+    """Strip the plural/participle suffixes that split obvious matches.
+
+    Deliberately crude — the taxonomy is a closed vocabulary of ~19 clauses, so
+    this only has to reconcile "cheats"/"cheating" and "scam"/"scams", not
+    survive general English. The length guard keeps short words intact.
+    """
+    for suffix in ("ing", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _significant_tokens(text: str) -> set[str]:
+    """Word-boundary, stemmed tokens worth matching on, lowercased.
+
+    Word boundaries (not substrings) and a stopword filter are both required:
+    either one alone still lets a common word match an unrelated clause.
+    """
+    return {
+        _stem(token)
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) > 2 and token not in _STOPWORDS
+    }
+
+
+def _clause_payload(clause: PolicyClause) -> dict[str, str | int]:
+    return {
+        "category": clause.category,
+        "pillar": clause.pillar,
+        "severity_tier": clause.tier,
+        "clause_id": clause.clause_id,
+        "summary": clause.summary,
+        "source_url": clause.source_url,
+    }
+
+
 def _keyword_retrieve_policy(query: str, limit: int = 3) -> list[dict[str, str | int]]:
+    """Rank clauses by weighted token overlap with the query.
+
+    Fallback for when the semantic index is unavailable. It is a keyword scorer,
+    not a retriever — it is expected to be worse than embeddings, but it must not
+    be *actively misleading*, which unranked substring matching was.
+    """
     query_lower = query.lower()
-    ranked: list[PolicyClause] = []
+    query_tokens = _significant_tokens(query)
+
+    scored: list[tuple[int, int, PolicyClause]] = []
     for clause in POLICY_CLAUSES.values():
-        haystack = f"{clause.category} {clause.pillar} {clause.summary}".lower()
-        if clause.category.lower() in query_lower or any(token in haystack for token in query_lower.split()):
-            ranked.append(clause)
-    if not ranked:
-        ranked = [POLICY_CLAUSES["No Violation"]]
-    return [
-        {
-            "category": clause.category,
-            "pillar": clause.pillar,
-            "severity_tier": clause.tier,
-            "clause_id": clause.clause_id,
-            "summary": clause.summary,
-            "source_url": clause.source_url,
-        }
-        for clause in ranked[:limit]
-    ]
+        score = _CATEGORY_NAME_WEIGHT if clause.category.lower() in query_lower else 0
+        score += _CATEGORY_TOKEN_WEIGHT * len(query_tokens & _significant_tokens(clause.category))
+        score += _PILLAR_TOKEN_WEIGHT * len(query_tokens & _significant_tokens(clause.pillar))
+        score += _SUMMARY_TOKEN_WEIGHT * len(query_tokens & _significant_tokens(clause.summary))
+        if score > 0:
+            # Tier ascends as severity falls, so it breaks ties toward the more
+            # severe clause without ever outranking a better keyword match.
+            scored.append((-score, clause.tier, clause))
+
+    if not scored:
+        return [_clause_payload(POLICY_CLAUSES["No Violation"])]
+    scored.sort(key=lambda entry: (entry[0], entry[1]))
+    return [_clause_payload(clause) for _, _, clause in scored[:limit]]
 
 
 @function_tool

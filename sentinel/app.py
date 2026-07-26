@@ -20,7 +20,7 @@ except FileNotFoundError:
 
 from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
-from sentinel.config import DEFAULT_DB_PATH, DEMO_SAMPLES_DIR, SYNTHETIC_CASES_DIR
+from sentinel.config import DEFAULT_DB_PATH, DEMO_SAMPLES_DIR, SYNTHETIC_CASES_DIR, load_settings
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import get_clause_for_category
@@ -183,7 +183,23 @@ def render_tier1_demo() -> None:
             "ticketing tool, so the AI cannot skip the escalation. Requires OPENAI_API_KEY; "
             "offline, run the same case from the Synthetic library tab."
         )
-        if st.button("Run the Tier-1 guardrail demo", key="run-tier1-demo"):
+        # Without credentials this case cannot reach the agents, so the rail it
+        # is meant to demonstrate never fires — the run falls through to the
+        # generic fail-closed path and renders "No Violation / tier 0" for a
+        # Tier-1 stand-in, i.e. the exact opposite of the point. Disable rather
+        # than show a verdict that contradicts the asset's own label.
+        live_agents_available = load_settings().openai_api_key_present
+        if not live_agents_available:
+            st.warning(
+                "OPENAI_API_KEY is not configured, so this case cannot reach the live agents. "
+                "Run `tier1-child-standin-001` from the Synthetic library below to see the "
+                "Tier-1 rail quarantine and ticket the case offline."
+            )
+        if st.button(
+            "Run the Tier-1 guardrail demo",
+            key="run-tier1-demo",
+            disabled=not live_agents_available,
+        ):
             production_case = build_production_uploaded_case(
                 name="tier1-guardrail-demo.txt",
                 content_type="text/plain",

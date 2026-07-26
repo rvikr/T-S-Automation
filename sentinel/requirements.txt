@@ -1,13 +1,25 @@
-openai-agents>=0.17.0
-requests>=2.32.0
-fastapi>=0.115.0
-uvicorn>=0.30.0
-python-dotenv>=1.0.1
-chromadb>=0.5.0
-Pillow>=10.0.0
-opencv-python-headless>=4.10.0.84
-moviepy>=1.0.3
-pydub>=0.25.1
-streamlit>=1.36.0
-PyYAML>=6.0.1
-pytest>=8.0.0
+# Sentinel runtime dependencies. Requires Python 3.11+.
+#
+# Pinned to the versions the test suite and the committed reference evals were
+# actually run against. These were previously ">=" floors with no upper bound,
+# which let a fresh clone resolve across breaking major releases — moviepy 1.x
+# vs 2.x and chromadb 0.5 vs 1.x are not drop-in compatible, so a new checkout
+# could fail in ways the committed results never saw.
+#
+# To upgrade: bump here, run `python -m pytest`, then re-run the offline eval.
+
+openai-agents==0.18.3
+requests==2.34.2
+fastapi==0.139.2
+uvicorn==0.51.0
+python-dotenv==1.2.2
+chromadb==1.5.9
+Pillow==11.3.0
+opencv-python-headless==5.0.0.93
+moviepy==2.2.1
+pydub==0.25.1
+streamlit==1.59.2
+PyYAML==6.0.3
+
+# Test-only
+pytest==9.1.1

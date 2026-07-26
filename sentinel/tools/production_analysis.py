@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from sentinel.config import load_settings
-from sentinel.models import Case, ProductionAssessment, Verdict
-from sentinel.tools.policy_retrieval import POLICY_CLAUSES, TIER1_CATEGORIES, get_clause_for_category
+from sentinel.config import (
+    LLM_MAX_RETRIES,
+    LLM_TIMEOUT_SECONDS,
+    MAX_TEXT_CHARS,
+    MAX_VIDEO_FRAMES,
+    load_settings,
+)
+from sentinel.guardrails import check_prompt_injection
+from sentinel.models import Case, ProductionAssessment, Verdict, build_verdict
+from sentinel.tools.policy_retrieval import (
+    POLICY_CLAUSES,
+    TIER1_CATEGORIES,
+    get_clause_for_category,
+    normalize_category,
+)
 
 
-MAX_TEXT_CHARS = 12000
-MAX_VIDEO_FRAMES = 4
-
+logger = logging.getLogger(__name__)
 
 def production_review(case: Case, reviewer: str, db_path) -> Verdict:
     assessment = analyze_asset(case, db_path=db_path)
-    category = assessment.category if assessment.category in POLICY_CLAUSES else "No Violation"
+    # Resolve aliases first, so a model that writes "CSAM" still lands on the
+    # Tier-1 clause below instead of falling through to the generic escalation.
+    category = normalize_category(assessment.category) or "No Violation"
     clause = get_clause_for_category(category)
     case.metadata["detected_category"] = category
     _record_agent_metadata(case, assessment)
@@ -52,13 +66,11 @@ def production_review(case: Case, reviewer: str, db_path) -> Verdict:
         rationale = assessment.rationale or f"Production analysis matched {clause.citation}."
         confidence = assessment.confidence
 
-    return Verdict(
+    return build_verdict(
         case_id=case.id,
-        decision=decision,  # type: ignore[arg-type]
-        severity_tier=clause.tier,
+        decision=decision,
         category=category,
-        policy_clause=clause.citation,
-        confidence=max(0.0, min(float(confidence), 1.0)),
+        confidence=confidence,
         rationale=rationale,
         reviewer=reviewer,
     )
@@ -102,12 +114,28 @@ def analyze_asset(case: Case, client: Any | None = None, db_path: Any | None = N
     On agent-runtime failure the system fails closed: the case comes back
     ambiguous and the orchestrator rails escalate it to review.
     """
-    if _agents_sdk_available() and load_settings().openai_api_key_present:
+    settings = load_settings()
+    if client is None and not settings.openai_api_key_present:
+        # The injection screen is deterministic regex over the upload's own
+        # bytes — no model call, no credentials. Returning "unavailable" without
+        # running it reported a hostile upload as an infrastructure gap rather
+        # than as the manipulation attempt it was, losing the attribution the
+        # audit trail depends on. Both paths still escalate to a human, so this
+        # changes what the trace says, not whether the content is enforced.
+        # With credentials present the SDK input guardrail performs this screen
+        # inside the agent run, so the tripwire span stays in the OpenAI trace.
+        screened = _screen_text_asset_for_injection(case)
+        if screened is not None:
+            return screened
+        return _unavailable_assessment("OpenAI credentials are not configured.")
+
+    if _agents_sdk_available() and settings.openai_api_key_present:
         from sentinel.agents.runtime import run_specialist_case
 
         try:
             return run_specialist_case(case, db_path=db_path, client=client)
         except Exception as exc:
+            logger.exception("Agent runtime failed for case %s: %s", case.id, exc)
             return ProductionAssessment(
                 decision="ambiguous",
                 category="No Violation",
@@ -116,30 +144,119 @@ def analyze_asset(case: Case, client: Any | None = None, db_path: Any | None = N
                 evidence_summary="Agent runtime error; no automated analysis available.",
                 agent_events=[f"agent_runtime.error:{type(exc).__name__}"],
             )
-    return _legacy_analyze_asset(case, client)
+    try:
+        return _legacy_analyze_asset(case, client)
+    except Exception as exc:
+        logger.exception("Legacy production analysis failed for case %s: %s", case.id, exc)
+        return _unavailable_assessment(f"Production analysis failed ({type(exc).__name__}).")
+
+
+def _unavailable_assessment(reason: str) -> ProductionAssessment:
+    return ProductionAssessment(
+        decision="ambiguous",
+        category="No Violation",
+        confidence=0.0,
+        rationale=f"{reason} Failing closed to escalated review.",
+        evidence_summary="No automated analysis was available.",
+        agent_events=["production_analysis.unavailable"],
+    )
+
+
+def _screen_text_asset_for_injection(case: Case) -> ProductionAssessment | None:
+    """Run the credential-free injection screen over a text upload.
+
+    Only text is screenable without a model: audio needs transcription first
+    (handled in :func:`_legacy_analyze_asset`) and image/video carry no directly
+    readable text. Returns ``None`` when the upload is not text or is clean, so
+    the caller falls through to its normal path.
+    """
+    if case.asset_type != "text":
+        return None
+    screen = check_prompt_injection(read_text_asset(case))
+    if not screen.triggered:
+        return None
+    return _legacy_injection_assessment(screen.matched)
+
+
+def _legacy_injection_assessment(matched: str) -> ProductionAssessment:
+    return ProductionAssessment(
+        decision="ambiguous",
+        category="No Violation",
+        confidence=0.99,
+        rationale=(
+            "Input guardrail detected an attempt to manipulate the moderator; "
+            "routed to human review without adjudication."
+        ),
+        evidence_summary=f"Prompt-injection screen tripped before adjudication (matched: {matched!r}).",
+        agent_events=["guardrail.input.injection"],
+    )
+
+
+def _apply_tier1_rail(assessment: ProductionAssessment) -> ProductionAssessment:
+    """Mirror the SDK Tier-1 output tripwire for the legacy classifier.
+
+    The SDK path halts the agent via ``tier1_output_guardrail``. The legacy path
+    has no agent to halt, so the equivalent invariant is enforced on the result:
+    a Tier-1 category never carries an automated decision.
+    """
+    if assessment.category not in TIER1_CATEGORIES:
+        return assessment
+    return replace(
+        assessment,
+        decision="ambiguous",
+        confidence=max(assessment.confidence, 0.95),
+        rationale="Tier-1 category detected; automated adjudication bypassed and routed to human review.",
+        agent_events=list(assessment.agent_events) + ["guardrail.tier1.legacy"],
+    )
 
 
 def _legacy_analyze_asset(case: Case, client: Any | None = None) -> ProductionAssessment:
+    """Single-shot classifier used when the Agents SDK is unavailable.
+
+    Carries the same two rails as the SDK path — prompt-injection screening
+    before adjudication, Tier-1 enforcement after — so that losing the SDK
+    degrades capability without degrading safety.
+    """
     client = client or _openai_client()
+
     if case.asset_type == "audio":
         transcript = transcribe_audio_asset(case, client)
-        return classify_text(
-            f"Audio transcript for moderation:\n{transcript}",
-            client=client,
-            asset_type="audio",
+        screen = check_prompt_injection(transcript)
+        if screen.triggered:
+            return _legacy_injection_assessment(screen.matched)
+        return _apply_tier1_rail(
+            classify_text(
+                f"Audio transcript for moderation:\n{transcript}",
+                client=client,
+                asset_type="audio",
+            )
         )
     if case.asset_type == "image":
-        return classify_image(case, client)
+        return _apply_tier1_rail(classify_image(case, client))
     if case.asset_type == "video":
-        return classify_video(case, client)
-    return classify_text(read_text_asset(case), client=client, asset_type="text")
+        return _apply_tier1_rail(classify_video(case, client))
+
+    text = read_text_asset(case)
+    screen = check_prompt_injection(text)
+    if screen.triggered:
+        return _legacy_injection_assessment(screen.matched)
+    return _apply_tier1_rail(classify_text(text, client=client, asset_type="text"))
 
 
 def read_text_asset(case: Case) -> str:
     path = Path(case.asset_path)
     if not path.exists():
         return ""
-    return path.read_text(encoding="utf-8", errors="ignore")[:MAX_TEXT_CHARS]
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # Binary content is never a legitimate text upload. Decoding it with
+        # errors="ignore" would yield non-empty mojibake that the text specialist
+        # would then "adjudicate" — an allow verdict on content nobody read.
+        # Returning empty routes the case to human review instead.
+        logger.warning("Asset %s declared as text is not valid UTF-8; treating as unreadable", case.id)
+        return ""
+    return text[:MAX_TEXT_CHARS]
 
 
 def transcribe_audio_asset(case: Case, client: Any) -> str:
@@ -227,6 +344,7 @@ def sample_video_frame_data_urls(asset_path: str, max_frames: int = MAX_VIDEO_FR
     try:
         import cv2
     except ImportError:
+        logger.warning("cv2 (opencv-python) not installed; video frame sampling unavailable")
         return []
 
     capture = cv2.VideoCapture(str(asset_path))
@@ -272,7 +390,8 @@ def extract_video_audio_transcript(case: Case, client: Any) -> str:
             clip.close()
         audio_case = Case(id=f"{case.id}-audio", asset_type="audio", asset_path=temp_path, metadata={})
         return transcribe_audio_asset(audio_case, client)
-    except Exception:
+    except Exception as exc:
+        logger.exception("Video audio extraction failed: %s", exc)
         return ""
     finally:
         if temp_path:
@@ -280,10 +399,17 @@ def extract_video_audio_transcript(case: Case, client: Any) -> str:
 
 
 def _openai_client():
+    """Build an OpenAI client with an explicit timeout and bounded retries.
+
+    The SDK's own retry handling applies exponential backoff with jitter to
+    connection errors and 429/5xx responses, so we do not hand-roll one. The
+    timeout is the important part: the API routes are sync and run in FastAPI's
+    threadpool, so an untimed request pins a worker until the socket dies.
+    """
     from openai import OpenAI
 
     load_settings()
-    return OpenAI()
+    return OpenAI(timeout=LLM_TIMEOUT_SECONDS, max_retries=LLM_MAX_RETRIES)
 
 
 def _data_url(asset_path: str, content_type: Any | None = None) -> str:

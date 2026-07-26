@@ -8,11 +8,14 @@ fall back to keyword retrieval and offline flows never need the network.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sentinel.config import DB_DIR, load_settings
 from sentinel.tools.policy_retrieval import POLICY_CLAUSES, ROBLOX_STANDARDS_URL, PolicyClause
 
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "sentinel_policy"
 
@@ -71,7 +74,8 @@ def semantic_policy_search(query: str, limit: int = 3) -> list[dict[str, Any]] |
             return None
         embedding = _embed_texts([query])[0]
         result = collection.query(query_embeddings=[embedding], n_results=min(limit, indexed))
-    except Exception:
+    except Exception as exc:
+        logger.exception("Semantic policy search failed: %s", exc)
         return None
 
     metadatas = (result.get("metadatas") or [[]])[0]
@@ -94,4 +98,6 @@ def semantic_policy_search(query: str, limit: int = 3) -> list[dict[str, Any]] |
 
 if __name__ == "__main__":
     count = build_policy_index()
+    logger.info("Indexed %d policy clauses into '%s' at %s", count, COLLECTION_NAME, DB_DIR / "chroma")
+    # Also print for direct CLI invocation — user expects visible confirmation.
     print(f"Indexed {count} policy clauses into '{COLLECTION_NAME}' at {DB_DIR / 'chroma'}")

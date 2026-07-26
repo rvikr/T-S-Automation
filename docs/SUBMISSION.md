@@ -32,7 +32,7 @@ An API-first, multimodal (text / image / audio / video) moderation platform:
 | Est. cost per live text case | **$0.002 mean** (vs $0.50–$2.00 human review) |
 | Latency per case | **7 s mean / 10 s p95** (vs hours–days in human queues) |
 
-Reference runs are committed under `sentinel/eval_runs/reference-*`; regenerate with `python -m sentinel.eval.run_eval [--live]`. 28 fully-offline tests keep the invariants pinned (`python -m pytest sentinel/tests -q`).
+Reference runs are committed under `sentinel/eval_runs/reference-*`; regenerate with `python -m sentinel.eval.run_eval [--live]`. 123 fully-offline tests keep the invariants pinned (`python -m pytest`), and CI asserts Tier-1 recall and the benign false-positive rate on every push.
 
 ## Honest disclosures
 

@@ -8,17 +8,20 @@ local-only ticketing and never loses an escalation.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
-from sentinel.config import load_settings
+from sentinel.config import JIRA_REQUEST_TIMEOUT, load_settings
 from sentinel.models import Case, Ticket, Verdict
 
 
-REQUEST_TIMEOUT_SECONDS = 10
+logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT_SECONDS = JIRA_REQUEST_TIMEOUT
 
 PRIORITY_BY_TIER = {1: "Highest", 2: "High"}
 DEFAULT_PRIORITY = "Medium"
@@ -71,6 +74,11 @@ def create_jira_issue(ticket: Ticket, case: Case, verdict: Verdict) -> tuple[str
         if response is None:
             return None
     if response.status_code not in (200, 201):
+        logger.warning(
+            "Jira issue creation failed: status=%s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
         return None
     key = str(response.json().get("key", "")).strip()
     if not key:
@@ -87,7 +95,8 @@ def _post_issue(config: JiraConfig, fields: dict[str, Any]) -> requests.Response
             headers={"Accept": "application/json"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        logger.exception("Jira HTTP request failed: %s", exc)
         return None
 
 

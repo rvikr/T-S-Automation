@@ -28,8 +28,11 @@ def create_human_ticket(case: Case, severity: int, category: str, db_path: str |
     with db_connection(db_path) as conn:
         conn.execute(
             """
-            INSERT INTO tickets (id, case_id, severity, category, status, created_at, api_key_id, tenant_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tickets (
+                id, case_id, severity, category, status, created_at,
+                api_key_id, tenant_name, run_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ticket.id,
@@ -40,6 +43,7 @@ def create_human_ticket(case: Case, severity: int, category: str, db_path: str |
                 ticket.created_at,
                 case.metadata.get("api_key_id"),
                 case.metadata.get("tenant_name"),
+                case.metadata.get("moderation_run_id"),
             ),
         )
     return ticket

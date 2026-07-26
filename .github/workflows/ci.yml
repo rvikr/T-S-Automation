@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: sentinel/requirements.txt
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo xargs apt-get install -y < packages.txt
+
+      - name: Install dependencies
+        run: pip install -r sentinel/requirements.txt
+
+      - name: Run tests
+        # The suite is hermetic: conftest.py scrubs OPENAI_API_KEY and JIRA_*,
+        # so no job can reach the live API, export traces, or open real issues.
+        run: python -m pytest -q
+
+      - name: Verify the offline eval still holds the rails
+        # run_eval always exits 0, so assert the safety invariants explicitly
+        # rather than only checking that the harness does not crash.
+        run: |
+          python - <<'PY'
+          from sentinel.eval.run_eval import compute_metrics, run_golden_set
+
+          metrics = compute_metrics(run_golden_set(live=False))
+          print(metrics)
+
+          assert metrics["tier1_recall"] == 1.0, f"Tier-1 recall regressed: {metrics['tier1_recall']}"
+          assert metrics["benign_false_positive_rate"] == 0.0, (
+              f"Benign false-positive rate regressed: {metrics['benign_false_positive_rate']}"
+          )
+          PY

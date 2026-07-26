@@ -45,8 +45,15 @@ From the committed golden-set evaluation (`sentinel/eval_runs/reference-live/`, 
 
 - **Tier-1 recall: 100%** (the invariant — never missed, never adjudicated by AI)
 - **Benign false-positive rate: 0%**
-- **Outcome accuracy: 88.9%** against T&S-labeled outcomes — and every miss was an *over-escalation to human review*, never under-enforcement
+- **Outcome accuracy: 16/18 live text cases (88.9%)** against T&S-labeled outcomes — and both misses were *over-escalations to human review*, never under-enforcement
 - **$0.002 estimated cost per live text case** at published per-token rates, ~7 s mean latency — versus **$0.50–$2.00 and hours-to-days** for human-queue review
+
+Scope, stated plainly: the live run covers the 18 text cases, so 88.9% is a
+small-*n* figure whose value is the *direction* of its failures, not its
+precision. The golden set labels each case with its true modality, so these
+numbers measure the rails under honest input. Adversarial input — a spoofed
+`asset_type`, a non-canonical category label — is handled by separate
+deterministic checks covered in the test suite, not by these metrics.
 
 ## Run it in 3 commands
 
@@ -57,7 +64,7 @@ python sentinel/main.py --reset-db --seed-demo
 streamlit run sentinel/app.py
 ```
 
-28 offline tests (`python -m pytest sentinel/tests -q`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues.
+123 offline tests (`python -m pytest`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues. CI runs them on every push and asserts the Tier-1 recall and benign false-positive invariants against the offline golden set.
 
 ## Screenshots
 
@@ -67,6 +74,7 @@ streamlit run sentinel/app.py
 
 ## More
 
+- **Security posture, deployment assumptions, and known limitations:** [`SECURITY.md`](SECURITY.md) — read this before deploying. Notably, `hash_match.py` is an *integration seam* for PhotoDNA/PDQ that matches on fixture metadata, not a real perceptual-hash corpus; it provides no actual known-content detection as written.
 - **Full documentation** (setup, Jira integration, API, CLI, eval harness, demo script): [`sentinel/README.md`](sentinel/README.md)
 - **Submission one-pager:** [`docs/SUBMISSION.md`](docs/SUBMISSION.md)
 - **Demo video script:** [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)

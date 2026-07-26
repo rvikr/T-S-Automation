@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sentinel.agents.orchestrator import run_case
 from sentinel.models import ProductionAssessment
 from sentinel.tools.audit_log import init_db
-from sentinel.tools.production_analysis import production_review
+from sentinel.tools.production_analysis import analyze_asset, production_review
 from sentinel.ui_uploads import build_production_uploaded_case
 
 
@@ -85,6 +85,22 @@ class ProductionModerationTests(unittest.TestCase):
         self.assertEqual(result.verdict.reviewer, "text-specialist")
         self.assertIn("production_analysis:enabled", result.trace)
         self.assertIn("INT-SPAM-001", result.warning_message)
+
+    def test_missing_credentials_fail_closed_without_constructing_a_client(self):
+        case = build_production_uploaded_case(
+            name="caption.txt",
+            content_type="text/plain",
+            payload=b"content requiring review",
+            upload_dir=self.base_path,
+        )
+
+        with patch("sentinel.tools.production_analysis._openai_client") as open_client:
+            assessment = analyze_asset(case)
+
+        open_client.assert_not_called()
+        self.assertEqual(assessment.decision, "ambiguous")
+        self.assertEqual(assessment.confidence, 0.0)
+        self.assertIn("production_analysis.unavailable", assessment.agent_events)
 
     def test_production_tier1_routes_to_human_without_synthetic_rationale(self):
         case = build_production_uploaded_case(
