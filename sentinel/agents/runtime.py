@@ -18,15 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
 from agents import Agent, ModelSettings, RunHooks, Runner
 from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
+from pydantic import BaseModel, Field
 
 try:
     from agents import set_default_openai_client
 except ImportError:  # pragma: no cover - older SDK without the setter
-    set_default_openai_client = None
+    set_default_openai_client = None  # type: ignore[assignment]
 
 from sentinel.agents import live_events
 from sentinel.config import AGENT_TEMPERATURE, MAX_AGENT_TURNS, MAX_TEXT_CHARS, Settings, load_settings
@@ -251,6 +250,7 @@ def _prepare_input(case: Case, client: Any) -> tuple[list[dict[str, Any]] | None
     """Dispatch to the per-modality helper; returns (input_items, evidence_events)."""
     from sentinel.tools import production_analysis as pa
 
+    content: list[dict[str, Any]] | None
     if case.asset_type == "image":
         content, events = _prepare_image_input(case, pa)
     elif case.asset_type == "audio":
@@ -348,7 +348,7 @@ def _tier1_tripwire_assessment(exc: OutputGuardrailTripwireTriggered, events: li
     )
 
 
-def _usage_fields(result: Any) -> dict[str, int]:
+def _usage_fields(result: Any) -> dict[str, Any]:
     usage = getattr(getattr(result, "context_wrapper", None), "usage", None)
     if usage is None:
         return {}
@@ -361,7 +361,7 @@ def _usage_fields(result: Any) -> dict[str, int]:
 
 
 def _assessment_from_output(
-    output: AssessmentOutput, chain: list[str], events: list[str], usage: dict[str, int] | None = None
+    output: AssessmentOutput, chain: list[str], events: list[str], usage: dict[str, Any] | None = None
 ) -> ProductionAssessment:
     resolved = normalize_category(output.category)
     decision = output.decision
@@ -420,7 +420,15 @@ def run_specialist_case(case: Case, db_path: str | Path | None = None, client: A
     specialist = build_specialist_agent(asset_type, senior, settings)
     events.append(f"agent_run:{specialist.name}:{settings.specialist_model}")
     try:
-        result = Runner.run_sync(specialist, input_items, context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
+        # The SDK accepts plain dict input items at runtime; its type stubs
+        # only name the generated TypedDict variants.
+        result = Runner.run_sync(
+            specialist,
+            input_items,  # type: ignore[arg-type]
+            context=context,
+            max_turns=MAX_AGENT_TURNS,
+            hooks=_run_hooks(),
+        )
     except InputGuardrailTripwireTriggered:
         return _injection_tripwire_assessment(events)
     except OutputGuardrailTripwireTriggered as exc:
@@ -461,7 +469,14 @@ def run_senior_case(case: Case, initial_verdict: Verdict, db_path: str | Path | 
     senior = build_senior_agent(settings)
     events.append(f"agent_run:{senior.name}:{settings.senior_model}")
     try:
-        result = Runner.run_sync(senior, input_items + [escalation_note], context=context, max_turns=MAX_AGENT_TURNS, hooks=_run_hooks())
+        # See run_specialist_case: dict input items are valid at runtime.
+        result = Runner.run_sync(
+            senior,
+            input_items + [escalation_note],  # type: ignore[arg-type]
+            context=context,
+            max_turns=MAX_AGENT_TURNS,
+            hooks=_run_hooks(),
+        )
     except InputGuardrailTripwireTriggered:
         return _injection_tripwire_assessment(events)
     except OutputGuardrailTripwireTriggered as exc:

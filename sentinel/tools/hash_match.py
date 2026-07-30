@@ -7,15 +7,14 @@ from typing import Any
 try:
     from agents import RunContextWrapper, function_tool
 except ImportError:  # pragma: no cover
-    RunContextWrapper = Any  # type: ignore[assignment]
+    RunContextWrapper = Any  # type: ignore[misc, assignment]
 
-    def function_tool(func):
+    def function_tool(func):  # type: ignore[no-redef]
         return func
 
 from sentinel.config import DATA_DIR
 from sentinel.models import Case
 from sentinel.tools.policy_retrieval import TIER1_CATEGORIES
-
 
 KNOWN_HASHES_PATH = DATA_DIR / "known_hashes.txt"
 

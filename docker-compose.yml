@@ -1,0 +1,46 @@
+# Local / single-host deployment of Sentinel.
+#   docker compose up --build
+# API on http://localhost:8000, Streamlit UI on http://localhost:8501.
+# Secrets come from .env.local (gitignored); see sentinel/.env.example.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      SENTINEL_DB_PATH: /app/sentinel/db/audit.sqlite
+    volumes:
+      - sentinel-db:/app/sentinel/db
+      - sentinel-data:/app/sentinel/data
+
+  ui:
+    build: .
+    command:
+      [
+        "streamlit",
+        "run",
+        "sentinel/app.py",
+        "--server.address",
+        "0.0.0.0",
+        "--server.port",
+        "8501",
+        "--server.headless",
+        "true",
+      ]
+    ports:
+      - "8501:8501"
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      SENTINEL_DB_PATH: /app/sentinel/db/audit.sqlite
+    volumes:
+      - sentinel-db:/app/sentinel/db
+      - sentinel-data:/app/sentinel/data
+
+volumes:
+  sentinel-db:
+  sentinel-data:

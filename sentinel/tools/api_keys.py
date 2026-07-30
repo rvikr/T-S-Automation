@@ -17,7 +17,6 @@ from pathlib import Path
 from sentinel.models import ApiKeyRecord
 from sentinel.tools.audit_log import db_connection, init_db, utc_now
 
-
 VALID_ENVIRONMENTS = {"test", "live"}
 
 

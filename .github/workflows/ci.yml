@@ -6,6 +6,34 @@ on:
   pull_request:
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            sentinel/requirements.txt
+            sentinel/requirements-dev.txt
+
+      - name: Install dependencies
+        # mypy needs the runtime deps installed to resolve fastapi/pydantic types.
+        run: |
+          pip install -r sentinel/requirements.txt
+          pip install -r sentinel/requirements-dev.txt
+
+      - name: Ruff (lint + import hygiene)
+        run: ruff check sentinel
+
+      - name: Mypy (type check)
+        run: mypy
+
+      - name: pip-audit (known-vulnerability scan)
+        run: pip-audit -r sentinel/requirements.txt
+
   test:
     runs-on: ubuntu-latest
     strategy:

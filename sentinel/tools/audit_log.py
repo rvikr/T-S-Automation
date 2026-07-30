@@ -14,14 +14,13 @@ columns on first connection so existing databases upgrade transparently.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import asdict
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sentinel.config import SQLITE_BUSY_TIMEOUT
 from sentinel.models import Audit, ModerationLog, Ticket, Verdict
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audits (
@@ -71,6 +70,17 @@ CREATE TABLE IF NOT EXISTS precedents (
     case_signature TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS verdict_cache (
+    content_hash TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    clause TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    rationale TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (content_hash, asset_type)
+);
 """
 
 
@@ -113,7 +123,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def write_audit(
@@ -240,12 +250,12 @@ def list_moderation_logs(db_path: str | Path, tenant_name: str | None = None) ->
             rationale=row[6],
         )
         audit_run_id = row[7]
-        ticket = (
+        matched_ticket = (
             tickets_by_run.get(audit_run_id)
             if audit_run_id
             else legacy_tickets_by_case.get(audit.case_id)
         )
-        escalation_type, escalation_details = _escalation_details(audit, ticket)
+        escalation_type, escalation_details = _escalation_details(audit, matched_ticket)
         logs.append(
             ModerationLog(
                 id=audit.id,

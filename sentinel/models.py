@@ -78,7 +78,7 @@ def build_verdict(
     confidence: float,
     rationale: str,
     reviewer: str,
-) -> "Verdict":
+) -> Verdict:
     """Construct a :class:`Verdict` with consistent validation applied.
 
     Rules enforced here (single source of truth):

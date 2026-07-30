@@ -5,6 +5,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 if __package__ is None or __package__ == "":
     _this_dir = Path(__file__).resolve().parent
@@ -119,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2) if args.json else _format_result(payload))
         return 0
 
-    runs = []
+    runs: list[dict[str, Any]] = []
     for index in range(args.repeat):
         batch = run_batch(cases, db_path=db_path)
         runs.append(

@@ -1,0 +1,35 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 130
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# Deliberately conservative: correctness (F, E), import hygiene (I), and
+# modern-syntax (UP) rules only. Style rules that fight the codebase's
+# documented patterns (intentional broad excepts around fail-closed paths,
+# verbose log messages) are not enabled.
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# app.py and main.py rewrite sys.path before importing (Streamlit Cloud /
+# direct-script entrypoints); tests insert the project root the same way.
+"sentinel/app.py" = ["E402"]
+"sentinel/main.py" = ["E402"]
+"sentinel/tests/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sentinel"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["sentinel"]
+# Tests deliberately assert attributes on Optionals (the assertion *is* the
+# None-check); type-checking them adds noise without catching regressions.
+exclude = ["\\.venv", "sentinel/tests/"]
+ignore_missing_imports = true
+# Correctness-first: catch real regressions without demanding full annotation
+# coverage. Tighten incrementally as modules are annotated.
+check_untyped_defs = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+no_implicit_optional = true

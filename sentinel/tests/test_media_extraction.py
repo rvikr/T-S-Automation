@@ -8,16 +8,11 @@ optional dependencies (cv2, moviepy) are unavailable.  All tests are offline.
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
-from types import ModuleType
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from sentinel.models import Case
 from sentinel.tools.media_utils import detect_asset_type, quarantine
-
 
 # ---------------------------------------------------------------------------
 # detect_asset_type

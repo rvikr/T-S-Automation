@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 try:
     from agents import function_tool
 except ImportError:  # pragma: no cover - exercised when SDK is installed
-    def function_tool(func):
+    def function_tool(func):  # type: ignore[no-redef]
         return func
 
 
@@ -27,7 +31,10 @@ class PolicyClause:
         return f"{self.clause_id} ({self.pillar} / {self.category})"
 
 
-POLICY_CLAUSES: dict[str, PolicyClause] = {
+# The built-in reference taxonomy (modelled on a Roblox-style community
+# standard). A deployment brings its own policy by pointing SENTINEL_POLICY_FILE
+# at a YAML/JSON file — see sentinel/policy/policy.example.yaml.
+_DEFAULT_POLICY_CLAUSES: dict[str, PolicyClause] = {
     "No Violation": PolicyClause(
         category="No Violation",
         pillar="General",
@@ -163,15 +170,13 @@ POLICY_CLAUSES: dict[str, PolicyClause] = {
     ),
 }
 
-TIER1_CATEGORIES = {"Child Exploitation", "Terrorism & Violent Extremism"}
-
 # Models do not reliably reproduce taxonomy labels verbatim. An unrecognised
 # label previously collapsed to "No Violation" (tier 0), which meant a near-miss
 # on the *string* silently disarmed the Tier-1 rail for the most dangerous
 # categories in the taxonomy. Map the plausible aliases back onto the canonical
 # label; anything still unrecognised is handled by failing closed at the call
 # site rather than being treated as benign.
-CATEGORY_ALIASES: dict[str, str] = {
+_DEFAULT_CATEGORY_ALIASES: dict[str, str] = {
     "csam": "Child Exploitation",
     "csae": "Child Exploitation",
     "child sexual abuse material": "Child Exploitation",
@@ -188,6 +193,103 @@ CATEGORY_ALIASES: dict[str, str] = {
     "terrorist content": "Terrorism & Violent Extremism",
     "extremism": "Terrorism & Violent Extremism",
 }
+
+
+# ---------------------------------------------------------------------------
+# Bring-your-own-policy: SENTINEL_POLICY_FILE
+# ---------------------------------------------------------------------------
+
+POLICY_FILE_ENV = "SENTINEL_POLICY_FILE"
+
+_REQUIRED_CLAUSE_FIELDS = ("category", "pillar", "tier", "clause_id", "summary")
+
+
+def build_taxonomy(payload: Any) -> tuple[dict[str, PolicyClause], dict[str, str]]:
+    """Validate a parsed policy file and construct (clauses, aliases).
+
+    Fails loudly on any structural problem: enforcing content policy under a
+    taxonomy *other than the one the operator configured* is worse than
+    refusing to start. A ``"No Violation"`` tier-0 entry is required by the
+    verdict pipeline, so one is injected if the file omits it.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("clauses"), list):
+        raise ValueError("Policy file must be a mapping with a 'clauses' list")
+
+    clauses: dict[str, PolicyClause] = {}
+    for index, item in enumerate(payload["clauses"]):
+        if not isinstance(item, dict):
+            raise ValueError(f"Policy clause #{index} must be a mapping")
+        missing = [field for field in _REQUIRED_CLAUSE_FIELDS if field not in item]
+        if missing:
+            raise ValueError(f"Policy clause #{index} is missing fields: {', '.join(missing)}")
+        category = str(item["category"]).strip()
+        if not category:
+            raise ValueError(f"Policy clause #{index} has an empty category")
+        if category in clauses:
+            raise ValueError(f"Duplicate policy category: {category!r}")
+        try:
+            tier = int(item["tier"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Policy clause {category!r} has a non-integer tier: {item['tier']!r}") from exc
+        if not 0 <= tier <= 3:
+            raise ValueError(f"Policy clause {category!r} tier must be 0-3, got {tier}")
+        clauses[category] = PolicyClause(
+            category=category,
+            pillar=str(item["pillar"]).strip(),
+            tier=tier,
+            clause_id=str(item["clause_id"]).strip(),
+            summary=str(item["summary"]).strip(),
+            source_url=str(item.get("source_url", "") or ""),
+        )
+
+    if "No Violation" not in clauses:
+        clauses["No Violation"] = _DEFAULT_POLICY_CLAUSES["No Violation"]
+    elif clauses["No Violation"].tier != 0:
+        raise ValueError("The 'No Violation' clause must be tier 0")
+
+    aliases_raw = payload.get("aliases") or {}
+    if not isinstance(aliases_raw, dict):
+        raise ValueError("Policy file 'aliases' must be a mapping of alias -> category")
+    aliases: dict[str, str] = {}
+    for alias, target in aliases_raw.items():
+        target_name = str(target).strip()
+        if target_name not in clauses:
+            raise ValueError(f"Alias {alias!r} points at unknown category {target_name!r}")
+        aliases[str(alias).strip().lower()] = target_name
+    return clauses, aliases
+
+
+def load_policy_file(path: str | Path) -> tuple[dict[str, PolicyClause], dict[str, str]]:
+    """Parse a YAML or JSON policy file into (clauses, aliases)."""
+    file_path = Path(path)
+    text = file_path.read_text(encoding="utf-8")
+    if file_path.suffix.lower() in {".yaml", ".yml"}:
+        import yaml
+
+        payload = yaml.safe_load(text)
+    else:
+        payload = json.loads(text)
+    return build_taxonomy(payload)
+
+
+def _assemble_taxonomy() -> tuple[dict[str, PolicyClause], dict[str, str]]:
+    policy_file = os.getenv(POLICY_FILE_ENV, "").strip()
+    if not policy_file:
+        return dict(_DEFAULT_POLICY_CLAUSES), dict(_DEFAULT_CATEGORY_ALIASES)
+    clauses, file_aliases = load_policy_file(policy_file)
+    # Built-in aliases are kept only when their target category still exists —
+    # an alias resolving to a category outside the taxonomy would crash clause
+    # lookup downstream. File-provided aliases win on collision.
+    merged = {alias: target for alias, target in _DEFAULT_CATEGORY_ALIASES.items() if target in clauses}
+    merged.update(file_aliases)
+    return clauses, merged
+
+
+POLICY_CLAUSES, CATEGORY_ALIASES = _assemble_taxonomy()
+
+# Derived, not hardcoded: a custom taxonomy's tier-1 clauses get the same
+# never-adjudicated-by-AI treatment as the built-in ones.
+TIER1_CATEGORIES = {category for category, clause in POLICY_CLAUSES.items() if clause.tier == 1}
 
 
 def normalize_category(category: str) -> str | None:

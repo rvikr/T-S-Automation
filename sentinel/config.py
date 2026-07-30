@@ -8,7 +8,7 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - dependency installed in normal setup
-    def load_dotenv(*args, **kwargs):
+    def load_dotenv(*args, **kwargs):  # type: ignore[misc]
         return False
 
 
@@ -60,6 +60,10 @@ MAX_UPLOAD_BYTES: int = int(os.getenv("SENTINEL_MAX_UPLOAD_BYTES", str(25 * 1024
 
 # Seconds SQLite waits on a locked database before raising.
 SQLITE_BUSY_TIMEOUT: float = float(os.getenv("SENTINEL_SQLITE_BUSY_TIMEOUT", "30"))
+
+# Bound on a single webhook delivery attempt, so a slow receiver cannot pin
+# the request that triggered it.
+WEBHOOK_TIMEOUT_SECONDS: float = float(os.getenv("SENTINEL_WEBHOOK_TIMEOUT", "5"))
 
 # When no model adjudicates a production upload (no credentials, or the call
 # failed) every case fails closed to an escalation — so mirroring those to Jira

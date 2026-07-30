@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -12,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sentinel.agents.orchestrator import run_case
 from sentinel.models import Case
 from sentinel.tools.audit_log import init_db, list_moderation_logs
-from sentinel.tools.jira_client import create_jira_issue, jira_enabled
+from sentinel.tools.jira_client import jira_enabled
 from sentinel.tools.ticketing import list_human_tickets
 
 

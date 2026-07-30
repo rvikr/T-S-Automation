@@ -11,8 +11,6 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from sentinel.tools.audit_log import _ensure_column, db_connection, init_db
 
 

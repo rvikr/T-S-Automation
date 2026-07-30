@@ -18,11 +18,9 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Iterable
 
 from sentinel.config import QUARANTINE_DIR, SYNTHETIC_CASES_DIR
 from sentinel.models import Case
-
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg"}

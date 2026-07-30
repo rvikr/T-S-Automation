@@ -8,8 +8,8 @@ eval) every emit is a no-op and behavior is byte-identical to a hook-less run.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Callable, Iterator
 
 _sink: Callable[[str], None] | None = None
 

@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 from pathlib import Path
 
 try:
     from agents import RunContextWrapper, function_tool
 except ImportError:  # pragma: no cover
-    RunContextWrapper = None  # type: ignore[assignment]
+    RunContextWrapper = None  # type: ignore[misc, assignment]
 
-    def function_tool(func):
+    def function_tool(func):  # type: ignore[no-redef]
         return func
 
+from collections.abc import Sequence
 from typing import Any
 
-from sentinel.models import Case, Precedent, Verdict
 from sentinel.config import DB_DIR
+from sentinel.models import Case, Precedent, Verdict
 from sentinel.tools.audit_log import db_connection, init_db, utc_now
 from sentinel.tools.policy_retrieval import TIER1_CATEGORIES
-
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -84,8 +84,9 @@ def _retrieve_chroma_precedents(case: Case, db_path: str | Path, limit: int) -> 
     try:
         client = chromadb.PersistentClient(path=str(_chroma_path(db_path)))
         collection = client.get_or_create_collection("sentinel_precedents")
+        query_vectors: list[Sequence[float] | Sequence[int]] = [embed_vector(case)]
         result = collection.query(
-            query_embeddings=[embed_vector(case)],
+            query_embeddings=query_vectors,
             n_results=limit,
             where={"category": str(case.metadata.get("expected_category", ""))},
         )
@@ -182,9 +183,10 @@ def _write_chroma_precedent(case: Case, verdict: Verdict, db_path: str | Path, p
     try:
         client = chromadb.PersistentClient(path=str(_chroma_path(db_path)))
         collection = client.get_or_create_collection("sentinel_precedents")
+        upsert_vectors: list[Sequence[float] | Sequence[int]] = [embed_vector(case)]
         collection.upsert(
             ids=[f"precedent-{precedent_id}"],
-            embeddings=[embed_vector(case)],
+            embeddings=upsert_vectors,
             documents=[case_signature(case)],
             metadatas=[
                 {

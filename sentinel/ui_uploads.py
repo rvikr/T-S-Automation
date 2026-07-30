@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import hmac
 import json
+import os
 import re
 from pathlib import Path
 
 from sentinel.config import EVAL_RUNS_DIR, UPLOADS_DIR
 from sentinel.models import Case, ModerationLog
-from sentinel.tools.media_utils import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, VIDEO_EXTENSIONS
-
+from sentinel.tools.media_utils import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
 MODERATION_VIEW_LABEL = "Moderation"
+REVIEW_QUEUE_VIEW_LABEL = "Review queue"
 LOG_VIEW_LABEL = "Logs"
 METRICS_VIEW_LABEL = "Metrics"
 
@@ -31,6 +33,54 @@ OPENAI_TRACES_URL_TEMPLATE = "https://platform.openai.com/traces/trace?trace_id=
 
 def openai_trace_url(trace_id: str) -> str:
     return OPENAI_TRACES_URL_TEMPLATE.format(trace_id=trace_id)
+
+
+# ---------------------------------------------------------------------------
+# UI access control for the paid live-agent surface
+# ---------------------------------------------------------------------------
+# The production tab triggers real model calls billed to the operator's OpenAI
+# account. On a public deployment (e.g. Streamlit Cloud) that surface must not
+# be open to anonymous visitors: set SENTINEL_UI_PASSWORD to require a password
+# before any live run, and SENTINEL_UI_MAX_LIVE_RUNS to cap runs per session.
+# These helpers are pure (no streamlit import) so they stay offline-testable.
+
+UI_PASSWORD_ENV = "SENTINEL_UI_PASSWORD"
+UI_MAX_LIVE_RUNS_ENV = "SENTINEL_UI_MAX_LIVE_RUNS"
+DEFAULT_UI_MAX_LIVE_RUNS = 25
+
+
+def ui_password() -> str:
+    return os.getenv(UI_PASSWORD_ENV, "").strip()
+
+
+def verify_ui_password(candidate: str) -> bool:
+    """Constant-time check of a candidate against the configured UI password.
+
+    Returns False when no password is configured: an empty configuration means
+    "no password gate", never "any input passes".
+    """
+    expected = ui_password()
+    if not expected:
+        return False
+    return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
+def ui_live_run_cap() -> int:
+    """Per-session ceiling on live (paid) moderation runs; 0 means unlimited.
+
+    Unparseable or negative values fall back to the default rather than
+    silently disabling the cap — misconfiguration must not fail open.
+    """
+    raw = os.getenv(UI_MAX_LIVE_RUNS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_UI_MAX_LIVE_RUNS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_UI_MAX_LIVE_RUNS
+    if value < 0:
+        return DEFAULT_UI_MAX_LIVE_RUNS
+    return value
 
 
 # Published API prices (USD per 1M input/output tokens) as of July 2026.
@@ -209,6 +259,8 @@ def describe_trace_event(event: str) -> tuple[str, str]:
         return "🎫", "Ticket kept local (Jira not configured or unavailable)"
     if event == "quarantine.completed":
         return "🔒", "Content quarantined"
+    if event == "cache.hit:allow":
+        return "♻️", "Verdict cache hit: identical content previously allowed (no agent run, no cost)"
     if event.startswith("agent.agent_runtime.error:"):
         return "⚠️", f"Agent runtime error — failed closed to review ({event.rsplit(':', 1)[1]})"
     if event.startswith("latency:"):

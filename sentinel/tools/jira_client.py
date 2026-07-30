@@ -18,7 +18,6 @@ import requests
 from sentinel.config import JIRA_REQUEST_TIMEOUT, load_settings
 from sentinel.models import Case, Ticket, Verdict
 
-
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = JIRA_REQUEST_TIMEOUT

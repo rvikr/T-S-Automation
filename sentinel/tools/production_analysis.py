@@ -25,7 +25,6 @@ from sentinel.tools.policy_retrieval import (
     normalize_category,
 )
 
-
 logger = logging.getLogger(__name__)
 
 def production_review(case: Case, reviewer: str, db_path) -> Verdict:

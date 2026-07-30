@@ -10,13 +10,11 @@ import pytest
 
 from sentinel.guardrails import (
     INJECTION_PATTERNS,
-    InjectionScreenResult,
     Tier1GuardrailResult,
     check_prompt_injection,
     check_tier1_guardrail,
 )
 from sentinel.models import Verdict
-
 
 # ---------------------------------------------------------------------------
 # Helpers

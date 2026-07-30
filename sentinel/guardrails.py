@@ -25,12 +25,12 @@ from typing import Any
 try:
     from agents import GuardrailFunctionOutput, input_guardrail, output_guardrail
 except ImportError:  # pragma: no cover
-    GuardrailFunctionOutput = None
+    GuardrailFunctionOutput = None  # type: ignore[misc, assignment]
 
-    def output_guardrail(func):
+    def output_guardrail(func):  # type: ignore[no-redef]
         return func
 
-    def input_guardrail(func=None, **_kwargs):
+    def input_guardrail(func=None, **_kwargs):  # type: ignore[no-redef]
         if func is None:
             return lambda f: f
         return func

@@ -14,7 +14,6 @@ from typing import Any
 from sentinel.config import DB_DIR, load_settings
 from sentinel.tools.policy_retrieval import POLICY_CLAUSES, ROBLOX_STANDARDS_URL, PolicyClause
 
-
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "sentinel_policy"

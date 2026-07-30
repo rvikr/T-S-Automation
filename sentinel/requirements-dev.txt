@@ -1,0 +1,7 @@
+# Development / CI tooling. Pinned like the runtime requirements so lint and
+# type checks fail for code reasons, not because a tool release moved the bar.
+ruff==0.16.0
+mypy==2.3.0
+# Deliberately unpinned: pip-audit's value is its up-to-date vulnerability
+# database, so it should always run at its latest release.
+pip-audit

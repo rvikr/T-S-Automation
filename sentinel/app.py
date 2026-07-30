@@ -25,10 +25,12 @@ from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.media_utils import load_synthetic_cases
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.precedent_memory import clear_precedents
+from sentinel.tools.ticketing import list_human_tickets, resolve_ticket
 from sentinel.ui_uploads import (
     LOG_VIEW_LABEL,
     METRICS_VIEW_LABEL,
     MODERATION_VIEW_LABEL,
+    REVIEW_QUEUE_VIEW_LABEL,
     UPLOAD_EXTENSIONS,
     build_production_uploaded_case,
     describe_live_event,
@@ -38,11 +40,64 @@ from sentinel.ui_uploads import (
     list_eval_runs,
     load_eval_run,
     openai_trace_url,
+    ui_live_run_cap,
+    ui_password,
+    verify_ui_password,
 )
 
 
+def production_access_granted() -> bool:
+    """Gate the paid live-agent surface behind SENTINEL_UI_PASSWORD when set.
+
+    Without a configured password the tab stays open (local development), but a
+    deployment with live credentials gets a visible warning: this surface runs
+    model calls billed to the operator, so a public URL must not expose it
+    unauthenticated.
+    """
+    if not ui_password():
+        if load_settings().openai_api_key_present:
+            st.warning(
+                "This tab runs paid model calls and is currently unprotected. "
+                "Set SENTINEL_UI_PASSWORD before sharing this deployment publicly."
+            )
+        return True
+    if st.session_state.get("ui_unlocked"):
+        return True
+    st.info("Production moderation runs live agents (paid model calls) and requires a password.")
+    candidate = st.text_input("Access password", type="password", key="ui-password")
+    if st.button("Unlock", key="ui-unlock"):
+        if verify_ui_password(candidate):
+            st.session_state["ui_unlocked"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    return False
+
+
+def _consume_live_run_budget() -> bool:
+    """Enforce the per-session cap on live runs; returns False when exhausted."""
+    cap = ui_live_run_cap()
+    if cap <= 0:
+        return True
+    used = int(st.session_state.get("live_runs_used", 0))
+    if used >= cap:
+        st.error(
+            f"This session reached its limit of {cap} live moderation runs. "
+            "Refresh the page to start a new session, or raise SENTINEL_UI_MAX_LIVE_RUNS."
+        )
+        return False
+    st.session_state["live_runs_used"] = used + 1
+    return True
+
+
 def run_case_with_live_status(selected_case):
-    """Run a case while streaming agent tool calls and handoffs into st.status."""
+    """Run a case while streaming agent tool calls and handoffs into st.status.
+
+    Returns None when the session's live-run budget is exhausted — the budget
+    only applies to production cases, which are the ones that cost money.
+    """
+    if selected_case.metadata.get("analysis_mode") == "production" and not _consume_live_run_budget():
+        return None
     with st.status("Moderation agents are reviewing the upload...", expanded=True) as status:
         def _render(event: str) -> None:
             status.write(describe_live_event(event))
@@ -170,7 +225,8 @@ def render_demo_samples() -> None:
                 payload=sample_path.read_bytes(),
             )
             result = run_case_with_live_status(production_case)
-            render_result(result)
+            if result is not None:
+                render_result(result)
 
 
 def render_tier1_demo() -> None:
@@ -206,7 +262,8 @@ def render_tier1_demo() -> None:
                 payload=TIER1_DEMO_ASSET.read_bytes(),
             )
             result = run_case_with_live_status(production_case)
-            render_result(result)
+            if result is not None:
+                render_result(result)
 
 
 def render_learning_metric(cases) -> None:
@@ -222,6 +279,84 @@ def render_learning_metric(cases) -> None:
             delta=f"{second.escalation_rate - first.escalation_rate:.0%}",
         )
         st.write({"first_pass": first.escalation_rate, "second_pass": second.escalation_rate})
+
+
+def render_review_queue_page() -> None:
+    st.subheader("Human review queue")
+    st.caption(
+        "Escalations the rails routed to a human. Your decision here is final, is recorded in the "
+        "audit log under the original moderation run, and closes the ticket."
+    )
+    flash = st.session_state.pop("queue_flash", None)
+    if flash:
+        level, message = flash
+        (st.success if level == "success" else st.error)(message)
+    tickets = list_human_tickets(DEFAULT_DB_PATH)
+    open_tickets = [ticket for ticket in tickets if ticket.status == "open"]
+    resolved_tickets = [ticket for ticket in tickets if ticket.status != "open"]
+
+    if not open_tickets:
+        st.success("No open escalations — the queue is clear.")
+    else:
+        labels = [
+            f"{ticket.id} — Tier {ticket.severity} · {ticket.category} · case {ticket.case_id}"
+            for ticket in open_tickets
+        ]
+        selected_label = st.selectbox(f"Open tickets ({len(open_tickets)})", labels)
+        ticket = open_tickets[labels.index(selected_label)]
+
+        columns = st.columns(4)
+        columns[0].metric("Severity tier", ticket.severity)
+        columns[1].metric("Category", ticket.category)
+        columns[2].metric("Case", ticket.case_id)
+        columns[3].metric("Opened", ticket.created_at[:19])
+        if ticket.severity == 1:
+            st.warning(
+                "Tier-1 escalation: the content is quarantined and was never adjudicated by AI. "
+                "Follow your organisation's Tier-1 handling procedure before resolving."
+            )
+        if ticket.external_url:
+            st.link_button(f"Open {ticket.external_key} in Jira", ticket.external_url)
+
+        decision = st.radio("Final decision", ["allow", "reject"], horizontal=True, key=f"decision-{ticket.id}")
+        rationale = st.text_area(
+            "Rationale (required — written to the audit log)",
+            key=f"rationale-{ticket.id}",
+            placeholder="Why this decision is correct under the cited policy clause.",
+        )
+        if st.button("Resolve ticket", key=f"resolve-{ticket.id}", type="primary"):
+            if not rationale.strip():
+                st.error("A rationale is required: the audit trail must record why a human decided.")
+            else:
+                resolved = resolve_ticket(ticket.id, decision, rationale, DEFAULT_DB_PATH)
+                if resolved is None:
+                    st.session_state["queue_flash"] = (
+                        "error",
+                        "This ticket was already resolved (possibly by another reviewer).",
+                    )
+                else:
+                    st.session_state["queue_flash"] = (
+                        "success",
+                        f"Ticket {resolved.id} resolved: {decision}. Audit log updated.",
+                    )
+                st.rerun()
+
+    if resolved_tickets:
+        with st.expander(f"Recently resolved ({len(resolved_tickets)})"):
+            st.dataframe(
+                [
+                    {
+                        "Ticket": ticket.id,
+                        "Case": ticket.case_id,
+                        "Tier": ticket.severity,
+                        "Category": ticket.category,
+                        "Status": ticket.status,
+                        "Opened": ticket.created_at,
+                    }
+                    for ticket in resolved_tickets
+                ],
+                width="stretch",
+            )
 
 
 def render_logs_page() -> None:
@@ -307,17 +442,36 @@ def render_metrics_page() -> None:
         st.caption("No misses in this run.")
 
 
-st.set_page_config(page_title="Sentinel Moderation QA", layout="wide")
-st.title("Sentinel")
-st.caption("Agentic content moderation: specialist agents, senior review, Tier-1 human-only rails.")
+st.set_page_config(page_title="Sentinel — Trust & Safety Moderation", page_icon="🛡️", layout="wide")
+st.title("🛡️ Sentinel")
+st.caption("Agentic content moderation on deterministic rails: agents judge the content, code guards the agents.")
+
+with st.expander("New here? How Sentinel works", expanded=False):
+    st.markdown(
+        "1. **Moderation** — upload content (or run a bundled sample). A specialist agent grounds its "
+        "verdict in the policy corpus; ambiguous cases escalate to a stricter senior agent.\n"
+        "2. **Deterministic rails** — Tier-1 signals (child safety, terrorism) always quarantine and open "
+        "a human ticket; the agents have no ticketing tool, so the AI can neither create nor skip an escalation.\n"
+        "3. **Review queue** — human reviewers resolve escalated tickets; every resolution lands in the audit log.\n"
+        "4. **Logs & Metrics** — the full audit trail and the golden-set evaluation results."
+    )
 
 init_db(DEFAULT_DB_PATH)
 cases = load_synthetic_cases()
 case_by_label = {f"{case.id} - {case.metadata.get('expected_category')}": case for case in cases}
 
-view = st.sidebar.radio("View", [MODERATION_VIEW_LABEL, LOG_VIEW_LABEL, METRICS_VIEW_LABEL])
+_open_ticket_count = sum(1 for ticket in list_human_tickets(DEFAULT_DB_PATH) if ticket.status == "open")
+_queue_label = (
+    f"{REVIEW_QUEUE_VIEW_LABEL} ({_open_ticket_count})" if _open_ticket_count else REVIEW_QUEUE_VIEW_LABEL
+)
+_view_labels = [MODERATION_VIEW_LABEL, _queue_label, LOG_VIEW_LABEL, METRICS_VIEW_LABEL]
+view = st.sidebar.radio("View", _view_labels)
+if view == _queue_label:
+    view = REVIEW_QUEUE_VIEW_LABEL
 
-if view == LOG_VIEW_LABEL:
+if view == REVIEW_QUEUE_VIEW_LABEL:
+    render_review_queue_page()
+elif view == LOG_VIEW_LABEL:
     render_logs_page()
 elif view == METRICS_VIEW_LABEL:
     render_metrics_page()
@@ -325,30 +479,32 @@ else:
     upload_tab, synthetic_tab = st.tabs(["Production upload", "Synthetic library"])
 
     with upload_tab:
-        st.caption(
-            "Production mode: uploads are reviewed by live moderation agents against the policy taxonomy. "
-            "Do not upload illegal material; Tier-1 signals are routed to human review without detailed automated analysis."
-        )
-        upload = st.file_uploader(
-            "Upload image, video, audio, or text",
-            type=[ext.removeprefix(".") for ext in UPLOAD_EXTENSIONS],
-            accept_multiple_files=False,
-        )
-        render_preview(upload)
-        if upload and st.button("Run production moderation", key="run-upload"):
-            selected_case = build_production_uploaded_case(
-                name=upload.name,
-                content_type=upload.type,
-                payload=upload.getvalue(),
+        if production_access_granted():
+            st.caption(
+                "Production mode: uploads are reviewed by live moderation agents against the policy taxonomy. "
+                "Do not upload illegal material; Tier-1 signals are routed to human review without detailed automated analysis."
             )
-            result = run_case_with_live_status(selected_case)
-            render_result(result)
+            upload = st.file_uploader(
+                "Upload image, video, audio, or text",
+                type=[ext.removeprefix(".") for ext in UPLOAD_EXTENSIONS],
+                accept_multiple_files=False,
+            )
+            render_preview(upload)
+            if upload and st.button("Run production moderation", key="run-upload"):
+                selected_case = build_production_uploaded_case(
+                    name=upload.name,
+                    content_type=upload.type,
+                    payload=upload.getvalue(),
+                )
+                result = run_case_with_live_status(selected_case)
+                if result is not None:
+                    render_result(result)
 
-        st.divider()
-        render_demo_samples()
+            st.divider()
+            render_demo_samples()
 
-        st.divider()
-        render_tier1_demo()
+            st.divider()
+            render_tier1_demo()
 
     with synthetic_tab:
         st.caption("Synthetic labeled cases remain available for safe demos and regression checks.")

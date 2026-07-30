@@ -12,10 +12,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from sentinel.tools.hash_match import file_sha256, known_hash_match
-
 
 # ---------------------------------------------------------------------------
 # file_sha256

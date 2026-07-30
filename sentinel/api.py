@@ -17,29 +17,36 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import logging
 import mimetypes
 import os
+import sqlite3
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from sentinel.agents.orchestrator import run_case
-from sentinel.config import DEFAULT_DB_PATH, MAX_UPLOAD_BYTES, UPLOADS_DIR
+from sentinel.config import DEFAULT_DB_PATH, MAX_UPLOAD_BYTES, UPLOADS_DIR, load_settings
 from sentinel.models import ApiKeyRecord, Case, CaseResult, ModerationLog
-from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.api_keys import authenticate_api_key, create_api_key, list_api_keys, revoke_api_key
+from sentinel.tools.audit_log import init_db, list_moderation_logs
+from sentinel.tools.webhook import deliver_webhook, validate_callback_url
 from sentinel.ui_uploads import openai_trace_url, safe_upload_name
 
-
-
-# Informational metadata only — ServiceNow/Zendesk/webhook are not implemented.
-# Only Jira is supported; see sentinel/tools/jira_client.py.
-TICKETING_SYSTEMS = ["jira", "servicenow", "zendesk", "webhook"]
+# Ticketing systems Sentinel can actually mirror escalations to. Only list an
+# integration here once it is implemented — advertising unbuilt ones in every
+# API response misrepresents the product to integrators.
+TICKETING_SYSTEMS = ["jira"]
 AssetType = Literal["text", "image", "audio", "video"]
+
+API_VERSION = "1.0.0"
+
+logger = logging.getLogger(__name__)
 
 
 class ModerationRequest(BaseModel):
@@ -51,6 +58,9 @@ class ModerationRequest(BaseModel):
     content_type: str | None = None
     source_system: str | None = None
     external_reference: str | None = None
+    # Optional verdict delivery: the full result payload is POSTed here after
+    # moderation. Host must be on SENTINEL_WEBHOOK_ALLOWED_HOSTS (SSRF guard).
+    callback_url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -64,8 +74,36 @@ class CreateApiKeyRequest(BaseModel):
 # Route handlers (module-level; create_app wires them to the FastAPI router)
 # ---------------------------------------------------------------------------
 
-def _handle_health() -> dict[str, str]:
-    return {"status": "ok"}
+def _handle_health(db_path: Path) -> tuple[dict[str, Any], int]:
+    """Liveness plus a database reachability check.
+
+    Reports configuration as booleans only — never credential values. Returns
+    503 when the audit database cannot answer a trivial query, because a
+    service that cannot persist verdicts must not be routed traffic.
+    """
+    from sentinel.tools.audit_log import db_connection
+    from sentinel.tools.jira_client import jira_enabled
+
+    database = "ok"
+    status_code = 200
+    try:
+        with db_connection(db_path) as conn:
+            conn.execute("SELECT 1").fetchone()
+    except sqlite3.Error:
+        logger.exception("Health check: audit database unreachable at %s", db_path)
+        database = "unreachable"
+        status_code = 503
+    from sentinel.config import load_settings
+
+    payload = {
+        "status": "ok" if status_code == 200 else "degraded",
+        "version": API_VERSION,
+        "database": database,
+        "openai_configured": load_settings().openai_api_key_present,
+        "jira_configured": jira_enabled(),
+        "ticketing_systems": TICKETING_SYSTEMS,
+    }
+    return payload, status_code
 
 
 def _handle_create_key(
@@ -109,9 +147,20 @@ def _handle_moderate_case(
     authorization: str | None,
 ) -> dict:
     api_key = _require_api_key(authorization, db_path)
+    if request.callback_url:
+        # Validate before running the case: rejecting a bad callback after the
+        # (paid) moderation run would bill the caller for a result they asked
+        # to receive somewhere unreachable.
+        rejection = validate_callback_url(request.callback_url)
+        if rejection:
+            raise HTTPException(status_code=422, detail=rejection)
     case = _build_case_from_request(request, upload_dir, api_key)
     result = run_case(case, db_path=db_path)
-    return _result_payload(result)
+    payload = _result_payload(result)
+    if request.callback_url:
+        delivered = deliver_webhook(request.callback_url, payload)
+        payload["integration"]["webhook"] = {"url": request.callback_url, "delivered": delivered}
+    return payload
 
 
 def _handle_get_moderation_logs(
@@ -142,6 +191,24 @@ def _handle_get_case_logs(case_id: str, db_path: Path, authorization: str | None
 # App factory — binds handlers to routes
 # ---------------------------------------------------------------------------
 
+def _init_error_tracking() -> None:
+    """Initialise Sentry when SENTRY_DSN is configured; a no-op otherwise.
+
+    sentry-sdk is an optional dependency: a deployment opts in by installing it
+    and setting the DSN. Missing either half must never break the API.
+    """
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        logger.warning("SENTRY_DSN is set but sentry-sdk is not installed; error tracking disabled")
+        return
+    sentry_sdk.init(dsn=dsn, traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0")))
+    logger.info("Sentry error tracking enabled")
+
+
 def create_app(
     db_path: str | Path = DEFAULT_DB_PATH,
     upload_dir: str | Path = UPLOADS_DIR / "api",
@@ -151,19 +218,49 @@ def create_app(
     resolved_upload_dir = Path(upload_dir)
     resolved_admin_token = admin_token if admin_token is not None else os.getenv("SENTINEL_ADMIN_TOKEN")
     init_db(resolved_db_path)
+    _init_error_tracking()
 
     app = FastAPI(
         title="Sentinel Autonomous Moderation API",
-        version="1.0.0",
+        version=API_VERSION,
         description=(
             "Vendor-neutral moderation API for autonomous enforcement and ticketing-tool "
-            "integration with Jira, ServiceNow, Zendesk, or in-house queues."
+            "integration with Jira or in-house queues."
         ),
     )
 
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        """Attach a correlation ID to every request and log its outcome.
+
+        An inbound X-Request-ID is honoured so callers can stitch Sentinel's
+        logs into their own traces; otherwise one is generated.
+        """
+        request_id = request.headers.get("X-Request-ID", "").strip() or uuid.uuid4().hex[:16]
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception("request_id=%s %s %s raised", request_id, request.method, request.url.path)
+            raise
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "request_id=%s %s %s -> %s (%d ms)",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
+
     @app.get("/health")
-    def health() -> dict[str, str]:
-        return _handle_health()
+    def health() -> Any:
+        from fastapi.responses import JSONResponse
+
+        payload, status_code = _handle_health(resolved_db_path)
+        return JSONResponse(payload, status_code=status_code)
 
     @app.post("/admin/api-keys", status_code=201)
     def create_key(request: CreateApiKeyRequest, authorization: str | None = Header(default=None)) -> dict:
@@ -434,4 +531,6 @@ def _log_payload(log: ModerationLog) -> dict:
     return asdict(log)
 
 
-app = create_app()
+# Honour SENTINEL_DB_PATH for the uvicorn entrypoint (containers point it at a
+# volume); create_app's explicit argument still wins everywhere else (tests).
+app = create_app(db_path=load_settings().db_path)

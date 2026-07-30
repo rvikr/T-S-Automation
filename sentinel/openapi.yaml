@@ -310,6 +310,15 @@ components:
         external_reference:
           type: string
           description: Issue, ticket, user-content, or platform reference ID.
+        callback_url:
+          type: string
+          description: >-
+            Optional webhook URL the full moderation result is POSTed to after
+            adjudication. The host must be on the operator-configured
+            SENTINEL_WEBHOOK_ALLOWED_HOSTS allowlist; otherwise the request is
+            rejected with 422 before moderation runs. When
+            SENTINEL_WEBHOOK_SECRET is set, deliveries carry an
+            X-Sentinel-Signature sha256 HMAC of the body.
         metadata:
           type: object
           additionalProperties: true
@@ -410,16 +419,24 @@ components:
         - ticketing_payload
       properties:
         ticketing_systems:
+          description: Ticketing systems Sentinel can mirror escalations to.
           type: array
           items:
             type: string
             enum:
               - jira
-              - servicenow
-              - zendesk
-              - webhook
         ticketing_payload:
           $ref: "#/components/schemas/TicketingPayload"
+        webhook:
+          description: Present only when the request included callback_url.
+          type:
+            - object
+            - "null"
+          properties:
+            url:
+              type: string
+            delivered:
+              type: boolean
     TicketingPayload:
       type: object
       required:

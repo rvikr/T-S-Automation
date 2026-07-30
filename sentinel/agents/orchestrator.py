@@ -11,8 +11,8 @@ try:
     from agents import gen_trace_id
     from agents import trace as sdk_trace
 except ImportError:  # pragma: no cover - SDK installed in normal setup
-    gen_trace_id = None
-    sdk_trace = None
+    gen_trace_id = None  # type: ignore[assignment]
+    sdk_trace = None  # type: ignore[assignment]
 
 from sentinel.agents import audio_agent, image_agent, text_agent, video_agent
 from sentinel.agents.senior_reviewer import review_case as senior_review
@@ -21,10 +21,11 @@ from sentinel.guardrails import check_tier1_guardrail
 from sentinel.models import EVIDENCE_CACHE_KEY, BatchResult, Case, CaseResult, Verdict
 from sentinel.tools.audit_log import init_db, write_audit
 from sentinel.tools.hash_match import hash_match, known_hash_match
-from sentinel.tools.media_utils import ASSET_TYPE_MISMATCH_KEY, detect_asset_type, quarantine
 from sentinel.tools.jira_client import create_jira_issue
+from sentinel.tools.media_utils import ASSET_TYPE_MISMATCH_KEY, detect_asset_type, quarantine
 from sentinel.tools.policy_retrieval import get_clause_for_category
 from sentinel.tools.ticketing import attach_external_reference, create_human_ticket
+from sentinel.tools.verdict_cache import lookup_allow_verdict, store_allow_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -207,8 +208,15 @@ def run_case(case: Case, db_path: str | Path = DEFAULT_DB_PATH) -> CaseResult:
                 group_id=case.id,
                 metadata={"case_id": case.id, "modality": case.asset_type},
             ):
-                return _run_case_inner(case, db_path, trace)
-        return _run_case_inner(case, db_path, trace)
+                result = _run_case_inner(case, db_path, trace)
+        else:
+            result = _run_case_inner(case, db_path, trace)
+        # Cache only the safe direction: a final allow with no ticket. The
+        # store helper re-checks decision/tier/reviewer, so escalations and
+        # rejections can never populate the cache.
+        if result.ticket is None and not result.quarantined:
+            store_allow_verdict(case, result.verdict, db_path)
+        return result
     finally:
         # Pop after both agent passes (the senior run reuses the cache) and
         # before the case object is serialized anywhere.
@@ -286,6 +294,14 @@ def _handle_ambiguous_escalation(
 
 
 def _run_case_inner(case: Case, db_path: str | Path, trace: list[str]) -> CaseResult:
+    cached_verdict = lookup_allow_verdict(case, db_path)
+    if cached_verdict is not None:
+        # Only allow verdicts are ever cached, so a hit can skip the agents
+        # without ever skipping an enforcement action or escalation.
+        trace.append("cache.hit:allow")
+        _write_case_audit(case, cached_verdict, db_path)
+        return CaseResult(case=case, verdict=cached_verdict, trace=trace)
+
     specialist_verdict = _dispatch(case, db_path, trace)
     _drain_agent_events(case, trace)
     trace.append(f"specialist.verdict:{specialist_verdict.decision}:{specialist_verdict.policy_clause}")

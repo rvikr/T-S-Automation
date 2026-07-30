@@ -24,7 +24,7 @@ import json
 import tempfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sentinel.agents.orchestrator import run_case
@@ -188,7 +188,7 @@ def _per_modality(scores: list[CaseScore]) -> dict:
 
 
 def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode: str) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_dir / f"{timestamp}-{mode}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,10 +243,14 @@ def write_report(scores: list[CaseScore], metrics: dict, output_dir: Path, mode:
         "| Outcome | Support | Precision | Recall | F1 |",
         "|---|---|---|---|---|",
     ]
+    def _fmt(value: object) -> str:
+        return f"{value:.3f}" if isinstance(value, float) else "n/a"
+
     for outcome in OUTCOMES:
         row = metrics["per_class"][outcome]
-        fmt = lambda v: f"{v:.3f}" if isinstance(v, float) else "n/a"
-        lines.append(f"| {outcome} | {row['support']} | {fmt(row['precision'])} | {fmt(row['recall'])} | {fmt(row['f1'])} |")
+        lines.append(
+            f"| {outcome} | {row['support']} | {_fmt(row['precision'])} | {_fmt(row['recall'])} | {_fmt(row['f1'])} |"
+        )
 
     per_modality = metrics.get("per_modality") or {}
     if per_modality:

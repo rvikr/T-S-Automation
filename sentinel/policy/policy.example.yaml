@@ -1,0 +1,55 @@
+# Example custom policy taxonomy for Sentinel.
+#
+# Point SENTINEL_POLICY_FILE at a file like this one (YAML or JSON) to replace
+# the built-in taxonomy with your platform's own community standards. The
+# service refuses to start on a malformed file — enforcing under the wrong
+# policy is worse than not starting.
+#
+# Rules:
+# - Every clause needs: category, pillar, tier (0-3), clause_id, summary.
+#   source_url is optional.
+# - Tier semantics: 1 = never adjudicated by AI (always quarantined and routed
+#   to a human ticket), 2 = context-sensitive (senior review before action),
+#   3 = clear violation (auto-reject eligible), 0 = benign.
+# - A tier-0 "No Violation" clause is required; if omitted, Sentinel injects
+#   its default one.
+# - aliases map the labels a model might emit onto your canonical categories,
+#   so a wording near-miss can never silently downgrade a Tier-1 verdict.
+
+clauses:
+  - category: No Violation
+    pillar: General
+    tier: 0
+    clause_id: ACME-ALLOW-000
+    summary: Content with no matched policy category.
+
+  - category: Child Exploitation
+    pillar: Safety
+    tier: 1
+    clause_id: ACME-CE-001
+    summary: Child-safety violations are quarantined and human-reviewed; never adjudicated by AI.
+    source_url: https://example.com/policy/child-safety
+
+  - category: Terrorism & Violent Extremism
+    pillar: Safety
+    tier: 1
+    clause_id: ACME-TVE-001
+    summary: Violent-extremist content is quarantined and human-reviewed; never adjudicated by AI.
+
+  - category: Hate Speech
+    pillar: Safety
+    tier: 2
+    clause_id: ACME-HATE-001
+    summary: Identity-based attacks; context-sensitive, senior review before enforcement.
+
+  - category: Fraud
+    pillar: Integrity
+    tier: 3
+    clause_id: ACME-FRAUD-001
+    summary: Scams and deceptive commercial claims are rejected outright.
+
+aliases:
+  csam: Child Exploitation
+  terrorism: Terrorism & Violent Extremism
+  hateful conduct: Hate Speech
+  scam: Fraud
