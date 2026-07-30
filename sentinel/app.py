@@ -293,6 +293,13 @@ def render_learning_metric(cases) -> None:
         st.write({"first_pass": first.escalation_rate, "second_pass": second.escalation_rate})
 
 
+def _escalation_context(case_id: str) -> list:
+    """Audit rows for the escalated case — the 'why' a reviewer needs."""
+    from sentinel.tools.audit_log import fetch_audit_entries
+
+    return [audit for audit in fetch_audit_entries(DEFAULT_DB_PATH) if audit.case_id == case_id]
+
+
 def render_review_queue_page() -> None:
     st.subheader("Human review queue")
     st.caption(
@@ -307,21 +314,54 @@ def render_review_queue_page() -> None:
     open_tickets = [ticket for ticket in tickets if ticket.status == "open"]
     resolved_tickets = [ticket for ticket in tickets if ticket.status != "open"]
 
+    # Queue health at a glance.
+    tier1_open = sum(1 for ticket in open_tickets if ticket.severity == 1)
+    stats = st.columns(4)
+    stats[0].metric("Open", len(open_tickets))
+    stats[1].metric("Tier-1 open", tier1_open)
+    stats[2].metric("Resolved", len(resolved_tickets))
+    oldest = min((ticket.created_at for ticket in open_tickets), default=None)
+    stats[3].metric("Oldest open", oldest[:10] if oldest else "—")
+
     if not open_tickets:
         st.success("No open escalations — the queue is clear.")
     else:
+        tiers = sorted({ticket.severity for ticket in open_tickets})
+        tier_choice = st.selectbox(
+            "Filter by severity tier",
+            ["All"] + [f"Tier {tier}" for tier in tiers],
+            help="Tier 1 always sorts first — it is the queue's legal-exposure work.",
+        )
+        visible = [
+            ticket
+            for ticket in open_tickets
+            if tier_choice == "All" or f"Tier {ticket.severity}" == tier_choice
+        ]
+        # Severity-first, then oldest-first: the triage order a T&S lead expects.
+        visible.sort(key=lambda ticket: (ticket.severity, ticket.created_at))
+
         labels = [
             f"{ticket.id} — Tier {ticket.severity} · {ticket.category} · case {ticket.case_id}"
-            for ticket in open_tickets
+            for ticket in visible
         ]
-        selected_label = st.selectbox(f"Open tickets ({len(open_tickets)})", labels)
-        ticket = open_tickets[labels.index(selected_label)]
+        selected_label = st.selectbox(f"Open tickets ({len(visible)})", labels)
+        ticket = visible[labels.index(selected_label)]
 
         columns = st.columns(4)
         columns[0].metric("Severity tier", ticket.severity)
         columns[1].metric("Category", ticket.category)
         columns[2].metric("Case", ticket.case_id)
         columns[3].metric("Opened", ticket.created_at[:19])
+
+        context = _escalation_context(ticket.case_id)
+        if context:
+            with st.container(border=True):
+                st.markdown("**Why this escalated** — from the audit trail:")
+                for audit in context:
+                    st.markdown(
+                        f"- `{audit.timestamp[:19]}` **{audit.reviewer}** → {audit.decision} "
+                        f"under `{audit.clause}`: {audit.rationale}"
+                    )
         if ticket.severity == 1:
             st.warning(
                 "Tier-1 escalation: the content is quarantined and was never adjudicated by AI. "
@@ -477,7 +517,11 @@ _queue_label = (
     f"{REVIEW_QUEUE_VIEW_LABEL} ({_open_ticket_count})" if _open_ticket_count else REVIEW_QUEUE_VIEW_LABEL
 )
 _view_labels = [MODERATION_VIEW_LABEL, _queue_label, LOG_VIEW_LABEL, METRICS_VIEW_LABEL]
-view = st.sidebar.radio("View", _view_labels)
+view = st.sidebar.radio(
+    "View",
+    _view_labels,
+    help="Moderation runs cases; Review queue resolves escalations; Logs and Metrics are read-only evidence.",
+)
 if view == _queue_label:
     view = REVIEW_QUEUE_VIEW_LABEL
 
@@ -500,6 +544,7 @@ else:
                 "Upload image, video, audio, or text",
                 type=[ext.removeprefix(".") for ext in UPLOAD_EXTENSIONS],
                 accept_multiple_files=False,
+                help="The file is reviewed by live moderation agents; supported types are listed in the picker.",
             )
             render_preview(upload)
             if upload and st.button("Run production moderation", key="run-upload"):

@@ -155,10 +155,20 @@ def quarantine(case: Case, quarantine_dir: str | Path = QUARANTINE_DIR) -> bool:
     marker = target_dir / f"{safe_case_id}-{safe_run_id}.quarantined.txt"
 
     if case.metadata.get("analysis_mode") == "production":
-        target = target_dir / f"{safe_run_id}-{source.name}"
-        if source.resolve() == target.resolve():
-            return True
-        shutil.move(str(source), str(target))
+        from sentinel.tools.content_crypto import ENCRYPTED_SUFFIX, encrypt_file_to, encryption_enabled
+
+        if encryption_enabled():
+            # Encrypt-then-delete so quarantine never holds the plaintext of
+            # the worst content on disk. Reviewers decrypt via the
+            # content_crypto CLI.
+            target = target_dir / f"{safe_run_id}-{source.name}{ENCRYPTED_SUFFIX}"
+            encrypt_file_to(source, target)
+            source.unlink()
+        else:
+            target = target_dir / f"{safe_run_id}-{source.name}"
+            if source.resolve() == target.resolve():
+                return True
+            shutil.move(str(source), str(target))
 
     marker.write_text(
         "Asset quarantined by Sentinel. No content reproduction performed.\n",

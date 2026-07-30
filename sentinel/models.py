@@ -199,6 +199,12 @@ class ApiKeyRecord:
     created_at: str
     last_used_at: str | None = None
     expires_at: str | None = None
+    # Comma-separated grants; legacy keys (NULL column) default to full access.
+    scopes: str = "moderate,logs"
+    created_by: str | None = None
+
+    def has_scope(self, scope: str) -> bool:
+        return scope in {part.strip() for part in self.scopes.split(",") if part.strip()}
 
 
 @dataclass(frozen=True)

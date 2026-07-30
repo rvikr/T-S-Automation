@@ -88,8 +88,12 @@ Escalated cases then open real Jira issues (priority from severity tier, policy 
 - **Verdict webhooks** — pass `callback_url` on a moderation request to have the full result POSTed back. Fails closed: the host must be on `SENTINEL_WEBHOOK_ALLOWED_HOSTS` (SSRF guard), and `SENTINEL_WEBHOOK_SECRET` adds an `X-Sentinel-Signature` HMAC. Transient failures (network, 5xx, 429) retry with backoff (`SENTINEL_WEBHOOK_RETRIES`, default 2); permanent rejections don't.
 - **Verdict cache** — `SENTINEL_VERDICT_CACHE=1` reuses **allow** verdicts for byte-identical production uploads at zero agent cost. Only allows are cached; enforcement and escalation always re-run; every entry is fingerprinted against the active policy taxonomy, so changing the policy invalidates the cache automatically.
 - **Daily spend ceiling** — `SENTINEL_DAILY_LIVE_RUN_LIMIT` caps total moderation runs per UTC day across the API and UI combined (stored in SQLite, so it survives refreshes and restarts). API callers past the ceiling get 429 with `Retry-After`.
-- **Key expiry & rotation** — pass `expires_in_days` when minting a key to auto-expire it (expired keys fail auth), and `POST /admin/api-keys/{id}/rotate` revokes a key and mints its replacement for the same tenant in one step.
-- **Data retention** — schedule `python -m sentinel.tools.retention --uploads-days 30 --quarantine-days 90 --cache-days 30` (supports `--dry-run`) to age out stored content. Audit rows and tickets are deliberately not purgeable — they are the enforcement record.
+- **Key expiry, rotation & scopes** — pass `expires_in_days` when minting a key to auto-expire it (expired keys fail auth); `POST /admin/api-keys/{id}/rotate` revokes a key and mints its replacement (same tenant, same scopes) in one step; `"scopes": ["logs"]` mints a read-only reporting key that cannot submit cases.
+- **Named admin tokens** — `SENTINEL_ADMIN_TOKENS="alice:tok1,bob:tok2"` makes every admin action attributable (key mints record `created_by`); the single `SENTINEL_ADMIN_TOKEN` still works as the unnamed "admin".
+- **Operator metrics** — `GET /metrics` (admin token) reports uptime, audits by decision/reviewer, open tickets, cache entries, and daily-budget consumption, computed live from the audit tables.
+- **Data retention** — schedule `python -m sentinel.tools.retention --uploads-days 30 --quarantine-days 90 --cache-days 30` (supports `--dry-run`, and `--every-hours 24` for sidecar mode) to age out stored content. Audit rows and tickets are deliberately not purgeable — they are the enforcement record.
+- **Backups** — `python -m sentinel.tools.backup --output-dir sentinel/db/backups --keep 14` snapshots the audit database with SQLite's online backup API (safe while the service runs) and rotates old snapshots; `--every-hours 24` runs it as a sidecar. `docker compose --profile ops up -d` starts both the backup and retention sidecars.
+- **Encryption at rest** — set `SENTINEL_ENCRYPTION_KEY` (generate with `python -m sentinel.tools.content_crypto generate-key`) and quarantined content is Fernet-encrypted as it enters quarantine; reviewers decrypt with `python -m sentinel.tools.content_crypto decrypt <file>.enc`.
 - **Observability** — `GET /health` reports version, database reachability (503 when down), and configuration booleans; every response carries an `X-Request-ID` (inbound IDs are echoed). Install `sentry-sdk` and set `SENTRY_DSN` for error tracking.
 
 ### Run with Docker
@@ -175,7 +179,8 @@ Prep: `python sentinel/main.py --reset-db --seed-demo`, then `streamlit run sent
 
 ## Screenshots
 
-<!-- Captured on demo day; keep filenames stable. -->
-![Moderation view — live agent stream](docs/screenshots/moderation.png)
-![Tier-1 guardrail halt + Jira ticket](docs/screenshots/tier1-guardrail.png)
+<!-- Keep filenames stable; retake via docs/DEMO_SCRIPT.md's shot-list. -->
+![Moderation view — verdict card with policy citation and trace](docs/screenshots/moderation.png)
+![Tier-1 rail — quarantine and human ticket, adjudication bypassed](docs/screenshots/tier1-guardrail.png)
+![Human review queue — severity stats, tier filter, escalation context](docs/screenshots/review-queue.png)
 ![Metrics page — golden-set evaluation](docs/screenshots/metrics.png)

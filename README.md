@@ -66,9 +66,11 @@ streamlit run sentinel/app.py
 
 Or containerized: `docker compose up --build` (API on :8000, UI on :8501).
 
-206 offline tests (`python -m pytest`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues. CI runs them on every push, gates on `ruff` / `mypy` / `pip-audit`, and asserts the Tier-1 recall and benign false-positive invariants against the offline golden set.
+280+ offline tests (`python -m pytest`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues. CI runs them on every push, gates on `ruff` / `mypy` / `pip-audit`, and asserts the Tier-1 recall and benign false-positive invariants against the offline golden set.
 
-Beyond the demo, the service ships production controls (all opt-in via env, documented in `sentinel/.env.example`): a **human review queue** where reviewers resolve escalations into the audit trail, **bring-your-own-policy** taxonomies (`SENTINEL_POLICY_FILE` — tier-1 rails derived from your tiers, not hardcoded categories), **signed verdict webhooks** with an SSRF host-allowlist, per-IP **API rate limiting** with a stricter admin bucket, a password gate + run cap on the paid UI surface, an opt-in **allow-verdict cache** (only benign verdicts are ever cached), and `/health` + request-ID observability.
+Beyond the demo, the service ships production controls (all opt-in via env, documented in `sentinel/.env.example`): a **human review queue** where reviewers resolve escalations into the audit trail, **bring-your-own-policy** taxonomies (`SENTINEL_POLICY_FILE` — tier-1 rails derived from your tiers, not hardcoded categories), **signed verdict webhooks** with an SSRF host-allowlist and retry-on-transient, **API keys with scopes, expiry, and one-step rotation**, attributable **named admin tokens**, per-IP **rate limiting** plus a global daily spend ceiling, a password gate on the paid UI surface, an opt-in **allow-verdict cache** (only benign verdicts cached, invalidated on policy change), **encryption at rest** for quarantined content, scheduled **backup and retention** sidecars, and `/health` + `/metrics` + request-ID observability.
+
+Operational docs: [`SECURITY.md`](SECURITY.md) (posture and honest gaps), [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md), and template [`docs/legal/`](docs/legal/) policies (ToS, Privacy, AUP — counsel review required before use).
 
 ## Screenshots
 

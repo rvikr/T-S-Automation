@@ -125,6 +125,9 @@ def init_db(db_path: str | Path) -> Path:
         _ensure_column(conn, "verdict_cache", "policy_fingerprint", "TEXT")
         # Legacy keys have NULL expiry, i.e. they never expire — unchanged behavior.
         _ensure_column(conn, "api_keys", "expires_at", "TEXT")
+        # Legacy keys (NULL scopes) keep full access; NULL created_by = unattributed.
+        _ensure_column(conn, "api_keys", "scopes", "TEXT")
+        _ensure_column(conn, "api_keys", "created_by", "TEXT")
     return path
 
 

@@ -41,6 +41,50 @@ services:
       - sentinel-db:/app/sentinel/db
       - sentinel-data:/app/sentinel/data
 
+  # Ops sidecars — enable with:  docker compose --profile ops up -d
+  backup:
+    build: .
+    profiles: ["ops"]
+    command:
+      [
+        "python",
+        "-m",
+        "sentinel.tools.backup",
+        "--output-dir",
+        "/app/sentinel/db/backups",
+        "--keep",
+        "14",
+        "--every-hours",
+        "24",
+      ]
+    environment:
+      SENTINEL_DB_PATH: /app/sentinel/db/audit.sqlite
+    volumes:
+      - sentinel-db:/app/sentinel/db
+
+  retention:
+    build: .
+    profiles: ["ops"]
+    command:
+      [
+        "python",
+        "-m",
+        "sentinel.tools.retention",
+        "--uploads-days",
+        "30",
+        "--quarantine-days",
+        "90",
+        "--cache-days",
+        "30",
+        "--every-hours",
+        "24",
+      ]
+    environment:
+      SENTINEL_DB_PATH: /app/sentinel/db/audit.sqlite
+    volumes:
+      - sentinel-db:/app/sentinel/db
+      - sentinel-data:/app/sentinel/data
+
 volumes:
   sentinel-db:
   sentinel-data:

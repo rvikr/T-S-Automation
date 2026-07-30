@@ -20,6 +20,9 @@ moviepy==2.2.1
 pydub==0.25.1
 streamlit==1.59.2
 PyYAML==6.0.3
+# Quarantine encryption at rest (Fernet); already a transitive dependency,
+# pinned here because sentinel.tools.content_crypto imports it directly.
+cryptography==49.0.0
 
 # Test-only
 pytest==9.1.1

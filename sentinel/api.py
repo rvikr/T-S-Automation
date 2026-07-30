@@ -63,6 +63,9 @@ API_VERSION = "1.0.0"
 
 logger = logging.getLogger(__name__)
 
+# Process start, for the /metrics uptime figure.
+_PROCESS_STARTED = time.time()
+
 
 class ModerationRequest(BaseModel):
     case_id: str | None = None
@@ -85,6 +88,8 @@ class CreateApiKeyRequest(BaseModel):
     environment: Literal["test", "live"] = "test"
     # Omit for a non-expiring key (legacy behavior); set to auto-expire.
     expires_in_days: int | None = Field(default=None, ge=1)
+    # Omit for full access; e.g. ["logs"] mints a read-only reporting key.
+    scopes: list[str] | None = None
 
 
 class RotateApiKeyRequest(BaseModel):
@@ -127,53 +132,98 @@ def _handle_health(db_path: Path) -> tuple[dict[str, Any], int]:
     return payload, status_code
 
 
+def _handle_metrics(db_path: Path, admin_tokens: dict[str, str], authorization: str | None) -> dict:
+    """Operator counters. Admin-gated: volume and spend are operator data.
+
+    Counters are computed from the audit tables on demand — no separate
+    metrics store to drift out of sync with the source of truth.
+    """
+    _require_admin(authorization, admin_tokens)
+    from sentinel.tools.audit_log import db_connection
+    from sentinel.tools.run_budget import daily_limit
+
+    def _grouped(conn, table: str, column: str) -> dict[str, int]:
+        rows = conn.execute(f"SELECT {column}, COUNT(*) FROM {table} GROUP BY {column}").fetchall()  # noqa: S608 - identifiers are literals below
+        return {str(row[0]): int(row[1]) for row in rows}
+
+    with db_connection(db_path) as conn:
+        decisions = _grouped(conn, "audits", "decision")
+        reviewers = _grouped(conn, "audits", "reviewer")
+        ticket_statuses = _grouped(conn, "tickets", "status")
+        cache_entries = int(conn.execute("SELECT COUNT(*) FROM verdict_cache").fetchone()[0])
+        budget_row = conn.execute(
+            "SELECT count FROM live_run_budget ORDER BY day DESC LIMIT 1"
+        ).fetchone()
+
+    return {
+        "uptime_seconds": round(time.time() - _PROCESS_STARTED),
+        "audits": {"total": sum(decisions.values()), "by_decision": decisions, "by_reviewer": reviewers},
+        "tickets": {
+            "total": sum(ticket_statuses.values()),
+            "open": ticket_statuses.get("open", 0),
+            "by_status": ticket_statuses,
+        },
+        "verdict_cache_entries": cache_entries,
+        "daily_budget": {
+            "limit": daily_limit(),
+            "used_latest_day": int(budget_row[0]) if budget_row else 0,
+        },
+    }
+
+
 def _handle_create_key(
     request: CreateApiKeyRequest,
     db_path: Path,
-    admin_token: str | None,
+    admin_tokens: dict[str, str],
     authorization: str | None,
 ) -> dict:
-    _require_admin(authorization, admin_token)
+    actor = _require_admin(authorization, admin_tokens)
     try:
-        return create_api_key(
+        payload = create_api_key(
             db_path,
             tenant_name=request.tenant_name,
             project_name=request.project_name,
             environment=request.environment,
             expires_in_days=request.expires_in_days,
+            scopes=request.scopes,
+            created_by=actor,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.info("admin=%s created api key %s for tenant %s", actor, payload["key_id"], request.tenant_name)
+    return payload
 
 
 def _handle_rotate_key(
     key_id: str,
     request: RotateApiKeyRequest | None,
     db_path: Path,
-    admin_token: str | None,
+    admin_tokens: dict[str, str],
     authorization: str | None,
 ) -> dict:
-    _require_admin(authorization, admin_token)
+    actor = _require_admin(authorization, admin_tokens)
     expires_in_days = request.expires_in_days if request else None
-    replacement = rotate_api_key(db_path, key_id, expires_in_days=expires_in_days)
+    replacement = rotate_api_key(db_path, key_id, expires_in_days=expires_in_days, rotated_by=actor)
     if replacement is None:
         raise HTTPException(status_code=404, detail=f"No active API key to rotate: {key_id}")
+    logger.info("admin=%s rotated api key %s -> %s", actor, key_id, replacement["key_id"])
     return replacement
 
 
-def _handle_list_keys(db_path: Path, admin_token: str | None, authorization: str | None) -> dict:
-    _require_admin(authorization, admin_token)
+def _handle_list_keys(db_path: Path, admin_tokens: dict[str, str], authorization: str | None) -> dict:
+    _require_admin(authorization, admin_tokens)
     keys = [_api_key_record_payload(record) for record in list_api_keys(db_path)]
     return {"count": len(keys), "keys": keys}
 
 
 def _handle_revoke_key(
-    key_id: str, db_path: Path, admin_token: str | None, authorization: str | None
+    key_id: str, db_path: Path, admin_tokens: dict[str, str], authorization: str | None
 ) -> dict:
-    _require_admin(authorization, admin_token)
+    actor = _require_admin(authorization, admin_tokens)
     record = revoke_api_key(db_path, key_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Unknown API key: {key_id}")
+    logger.info("admin=%s revoked api key %s", actor, key_id)
     return _api_key_record_payload(record)
 
 
@@ -184,7 +234,7 @@ def _handle_moderate_case(
     authorization: str | None,
     daily_limit: int | None = None,
 ) -> dict:
-    api_key = _require_api_key(authorization, db_path)
+    api_key = _require_api_key(authorization, db_path, scope="moderate")
     allowed, used = consume_daily_budget(db_path, limit=daily_limit)
     if not allowed:
         raise HTTPException(
@@ -216,7 +266,7 @@ def _handle_get_moderation_logs(
     authorization: str | None,
     escalated: bool | None,
 ) -> dict:
-    api_key = _require_api_key(authorization, db_path)
+    api_key = _require_api_key(authorization, db_path, scope="logs")
     logs = list_moderation_logs(db_path, tenant_name=api_key.tenant_name)
     if escalated is not None:
         logs = [log for log in logs if log.escalation_triggered is escalated]
@@ -224,7 +274,7 @@ def _handle_get_moderation_logs(
 
 
 def _handle_get_case_logs(case_id: str, db_path: Path, authorization: str | None) -> dict:
-    api_key = _require_api_key(authorization, db_path)
+    api_key = _require_api_key(authorization, db_path, scope="logs")
     logs = [
         log
         for log in list_moderation_logs(db_path, tenant_name=api_key.tenant_name)
@@ -267,7 +317,9 @@ def create_app(
 ) -> FastAPI:
     resolved_db_path = Path(db_path)
     resolved_upload_dir = Path(upload_dir)
-    resolved_admin_token = admin_token if admin_token is not None else os.getenv("SENTINEL_ADMIN_TOKEN")
+    resolved_admin_tokens = _admin_token_table(
+        admin_token if admin_token is not None else os.getenv("SENTINEL_ADMIN_TOKEN")
+    )
     init_db(resolved_db_path)
     _init_error_tracking()
     global_limiter = RateLimiter(
@@ -345,17 +397,21 @@ def create_app(
         payload, status_code = _handle_health(resolved_db_path)
         return JSONResponse(payload, status_code=status_code)
 
+    @app.get("/metrics")
+    def metrics(authorization: str | None = Header(default=None)) -> dict:
+        return _handle_metrics(resolved_db_path, resolved_admin_tokens, authorization)
+
     @app.post("/admin/api-keys", status_code=201)
     def create_key(request: CreateApiKeyRequest, authorization: str | None = Header(default=None)) -> dict:
-        return _handle_create_key(request, resolved_db_path, resolved_admin_token, authorization)
+        return _handle_create_key(request, resolved_db_path, resolved_admin_tokens, authorization)
 
     @app.get("/admin/api-keys")
     def list_keys(authorization: str | None = Header(default=None)) -> dict:
-        return _handle_list_keys(resolved_db_path, resolved_admin_token, authorization)
+        return _handle_list_keys(resolved_db_path, resolved_admin_tokens, authorization)
 
     @app.post("/admin/api-keys/{key_id}/revoke")
     def revoke_key(key_id: str, authorization: str | None = Header(default=None)) -> dict:
-        return _handle_revoke_key(key_id, resolved_db_path, resolved_admin_token, authorization)
+        return _handle_revoke_key(key_id, resolved_db_path, resolved_admin_tokens, authorization)
 
     @app.post("/admin/api-keys/{key_id}/rotate", status_code=201)
     def rotate_key(
@@ -363,7 +419,7 @@ def create_app(
         request: RotateApiKeyRequest | None = None,
         authorization: str | None = Header(default=None),
     ) -> dict:
-        return _handle_rotate_key(key_id, request, resolved_db_path, resolved_admin_token, authorization)
+        return _handle_rotate_key(key_id, request, resolved_db_path, resolved_admin_tokens, authorization)
 
     @app.post("/moderation/cases", status_code=201)
     def moderate_case(request: ModerationRequest, authorization: str | None = Header(default=None)) -> dict:
@@ -470,21 +526,56 @@ def _content_type_for_request(request: ModerationRequest, filename: str) -> str:
     }[request.asset_type]
 
 
-def _require_admin(authorization: str | None, admin_token: str | None) -> None:
-    if not admin_token:
-        raise HTTPException(status_code=503, detail="Set SENTINEL_ADMIN_TOKEN before generating API keys")
+def _admin_token_table(admin_token: str | None) -> dict[str, str]:
+    """Named admin tokens, so admin actions are attributable to a person.
+
+    ``SENTINEL_ADMIN_TOKENS`` holds ``name:token`` pairs (comma-separated);
+    the single ``SENTINEL_ADMIN_TOKEN`` (or the ``admin_token`` argument) is
+    kept as the unnamed actor ``"admin"`` for compatibility.
+    """
+    table: dict[str, str] = {}
+    raw = os.getenv("SENTINEL_ADMIN_TOKENS", "").strip()
+    for pair in raw.split(","):
+        name, sep, token = pair.strip().partition(":")
+        if sep and name.strip() and token.strip():
+            table[name.strip()] = token.strip()
+    if admin_token:
+        table.setdefault("admin", admin_token)
+    return table
+
+
+def _require_admin(authorization: str | None, admin_tokens: dict[str, str]) -> str:
+    """Authenticate an admin request; returns the acting admin's name."""
+    if not admin_tokens:
+        raise HTTPException(
+            status_code=503,
+            detail="Set SENTINEL_ADMIN_TOKEN (or SENTINEL_ADMIN_TOKENS) before using admin routes",
+        )
     token = _extract_bearer_token(authorization)
-    if token is None or not hmac.compare_digest(token, admin_token):
-        raise HTTPException(status_code=401, detail="Invalid admin token", headers={"WWW-Authenticate": "Bearer"})
+    if token is not None:
+        # Compare against every configured token so timing does not reveal
+        # which names exist.
+        matched: str | None = None
+        for name, expected in admin_tokens.items():
+            if hmac.compare_digest(token, expected):
+                matched = name
+        if matched is not None:
+            return matched
+    raise HTTPException(status_code=401, detail="Invalid admin token", headers={"WWW-Authenticate": "Bearer"})
 
 
-def _require_api_key(authorization: str | None, db_path: Path) -> ApiKeyRecord:
+def _require_api_key(authorization: str | None, db_path: Path, scope: str) -> ApiKeyRecord:
     token = _extract_bearer_token(authorization)
     if token is None:
         raise HTTPException(status_code=401, detail="Missing API key", headers={"WWW-Authenticate": "Bearer"})
     api_key = authenticate_api_key(db_path, token)
     if api_key is None:
         raise HTTPException(status_code=401, detail="Invalid or revoked API key", headers={"WWW-Authenticate": "Bearer"})
+    if not api_key.has_scope(scope):
+        raise HTTPException(
+            status_code=403,
+            detail=f"This API key does not carry the '{scope}' scope (granted: {api_key.scopes})",
+        )
     return api_key
 
 

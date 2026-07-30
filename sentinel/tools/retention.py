@@ -103,22 +103,41 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-days", type=int, default=None, help="Purge verdict-cache rows older than N days.")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path (for --cache-days).")
     parser.add_argument("--dry-run", action="store_true", help="Report what would be purged without deleting.")
+    parser.add_argument(
+        "--every-hours",
+        type=float,
+        default=None,
+        help="Run forever, purging every N hours (sidecar mode). Omit for one shot.",
+    )
     args = parser.parse_args(argv)
 
     if args.uploads_days is None and args.quarantine_days is None and args.cache_days is None:
         parser.error("Nothing to do: pass at least one of --uploads-days / --quarantine-days / --cache-days")
+    if args.every_hours is not None and args.every_hours <= 0:
+        parser.error("--every-hours must be positive")
 
-    prefix = "[dry-run] would purge" if args.dry_run else "purged"
-    if args.uploads_days is not None:
-        files = purge_old_files(UPLOADS_DIR, args.uploads_days, dry_run=args.dry_run)
-        print(f"{prefix} {len(files)} upload file(s) older than {args.uploads_days}d from {UPLOADS_DIR}")
-    if args.quarantine_days is not None:
-        files = purge_old_files(QUARANTINE_DIR, args.quarantine_days, dry_run=args.dry_run)
-        print(f"{prefix} {len(files)} quarantine file(s) older than {args.quarantine_days}d from {QUARANTINE_DIR}")
-    if args.cache_days is not None:
-        count = purge_cache_rows(args.db, args.cache_days, dry_run=args.dry_run)
-        print(f"{prefix} {count} verdict-cache row(s) older than {args.cache_days}d from {args.db}")
-    return 0
+    def _run_purges() -> None:
+        prefix = "[dry-run] would purge" if args.dry_run else "purged"
+        if args.uploads_days is not None:
+            files = purge_old_files(UPLOADS_DIR, args.uploads_days, dry_run=args.dry_run)
+            print(f"{prefix} {len(files)} upload file(s) older than {args.uploads_days}d from {UPLOADS_DIR}")
+        if args.quarantine_days is not None:
+            files = purge_old_files(QUARANTINE_DIR, args.quarantine_days, dry_run=args.dry_run)
+            print(f"{prefix} {len(files)} quarantine file(s) older than {args.quarantine_days}d from {QUARANTINE_DIR}")
+        if args.cache_days is not None:
+            count = purge_cache_rows(args.db, args.cache_days, dry_run=args.dry_run)
+            print(f"{prefix} {count} verdict-cache row(s) older than {args.cache_days}d from {args.db}")
+
+    if args.every_hours is None:
+        _run_purges()
+        return 0
+    while True:
+        try:
+            _run_purges()
+        except Exception:
+            # A failed purge must not kill the sidecar; the next interval retries.
+            logger.exception("Scheduled retention purge failed; retrying next interval")
+        time.sleep(args.every_hours * 3600)
 
 
 if __name__ == "__main__":

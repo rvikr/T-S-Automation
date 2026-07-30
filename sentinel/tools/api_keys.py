@@ -20,8 +20,14 @@ from sentinel.tools.audit_log import db_connection, init_db, utc_now
 
 VALID_ENVIRONMENTS = {"test", "live"}
 
+# The grants a key can carry. "moderate" = submit cases; "logs" = read the
+# tenant's moderation logs.
+VALID_SCOPES = {"moderate", "logs"}
+DEFAULT_SCOPES = "moderate,logs"
+
 _KEY_COLUMNS = (
-    "id, tenant_name, project_name, environment, key_prefix, status, created_at, last_used_at, expires_at"
+    "id, tenant_name, project_name, environment, key_prefix, status, created_at, "
+    "last_used_at, expires_at, scopes, created_by"
 )
 
 
@@ -31,9 +37,12 @@ def create_api_key(
     project_name: str,
     environment: str,
     expires_in_days: int | None = None,
+    scopes: list[str] | None = None,
+    created_by: str | None = None,
 ) -> dict:
     init_db(db_path)
     normalized_environment = _normalize_environment(environment)
+    normalized_scopes = _normalize_scopes(scopes)
     expires_at = _expiry_timestamp(expires_in_days)
     key_id = f"key_{secrets.token_urlsafe(12).replace('-', '').replace('_', '')[:16]}"
     key_prefix = f"sent_{normalized_environment}"
@@ -44,9 +53,10 @@ def create_api_key(
             """
             INSERT INTO api_keys (
                 id, tenant_name, project_name, environment, key_prefix,
-                key_hash, status, created_at, last_used_at, expires_at
+                key_hash, status, created_at, last_used_at, expires_at,
+                scopes, created_by
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_id,
@@ -59,6 +69,8 @@ def create_api_key(
                 created_at,
                 None,
                 expires_at,
+                normalized_scopes,
+                created_by,
             ),
         )
     return {
@@ -71,35 +83,55 @@ def create_api_key(
         "status": "active",
         "created_at": created_at,
         "expires_at": expires_at,
+        "scopes": normalized_scopes,
+        "created_by": created_by,
     }
+
+
+def _normalize_scopes(scopes: list[str] | None) -> str:
+    if scopes is None:
+        return DEFAULT_SCOPES
+    cleaned = sorted({str(scope).strip().lower() for scope in scopes if str(scope).strip()})
+    if not cleaned:
+        raise ValueError("scopes must not be empty; omit the field for full access")
+    unknown = [scope for scope in cleaned if scope not in VALID_SCOPES]
+    if unknown:
+        raise ValueError(f"Unknown scopes: {', '.join(unknown)}. Valid scopes: {', '.join(sorted(VALID_SCOPES))}")
+    return ",".join(cleaned)
 
 
 def rotate_api_key(
     db_path: str | Path,
     key_id: str,
     expires_in_days: int | None = None,
+    rotated_by: str | None = None,
 ) -> dict | None:
     """Revoke a key and mint its replacement for the same tenant/project/env.
 
-    Returns the new-key payload (plaintext shown once, as at creation) with a
-    ``rotated_from`` field, or ``None`` when the key does not exist or is not
-    active — rotating a revoked key would silently resurrect its access.
+    Scopes carry over unchanged — rotation refreshes the secret, it must not
+    silently widen (or narrow) what the key can do. Returns the new-key payload
+    (plaintext shown once, as at creation) with a ``rotated_from`` field, or
+    ``None`` when the key does not exist or is not active — rotating a revoked
+    key would silently resurrect its access.
     """
     init_db(db_path)
     with db_connection(db_path) as conn:
         row = conn.execute(
-            "SELECT tenant_name, project_name, environment, status FROM api_keys WHERE id = ?",
+            "SELECT tenant_name, project_name, environment, status, scopes FROM api_keys WHERE id = ?",
             (key_id,),
         ).fetchone()
         if row is None or row[3] != "active":
             return None
         conn.execute("UPDATE api_keys SET status = ? WHERE id = ?", ("revoked", key_id))
+    carried_scopes = (row[4] or DEFAULT_SCOPES).split(",")
     replacement = create_api_key(
         db_path,
         tenant_name=row[0],
         project_name=row[1],
         environment=row[2],
         expires_in_days=expires_in_days,
+        scopes=carried_scopes,
+        created_by=rotated_by,
     )
     replacement["rotated_from"] = key_id
     return replacement
@@ -132,18 +164,9 @@ def revoke_api_key(db_path: str | Path, key_id: str) -> ApiKeyRecord | None:
         if row is None:
             return None
         conn.execute("UPDATE api_keys SET status = ? WHERE id = ?", ("revoked", key_id))
-    record = _record_from_row(row)
-    return ApiKeyRecord(
-        key_id=record.key_id,
-        tenant_name=record.tenant_name,
-        project_name=record.project_name,
-        environment=record.environment,
-        key_prefix=record.key_prefix,
-        status="revoked",
-        created_at=record.created_at,
-        last_used_at=record.last_used_at,
-        expires_at=record.expires_at,
-    )
+    from dataclasses import replace
+
+    return replace(_record_from_row(row), status="revoked")
 
 
 def authenticate_api_key(db_path: str | Path, api_key: str) -> ApiKeyRecord | None:
@@ -169,17 +192,11 @@ def authenticate_api_key(db_path: str | Path, api_key: str) -> ApiKeyRecord | No
         if _is_expired(record.expires_at):
             return None
         conn.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (now, record.key_id))
-    return ApiKeyRecord(
-        key_id=record.key_id,
-        tenant_name=record.tenant_name,
-        project_name=record.project_name,
-        environment=record.environment,
-        key_prefix=record.key_prefix,
-        status=record.status,
-        created_at=record.created_at,
-        last_used_at=now,
-        expires_at=record.expires_at,
-    )
+    # dataclasses.replace, not reconstruction: rebuilding field-by-field is how
+    # scopes silently fell back to the full-access default once already.
+    from dataclasses import replace
+
+    return replace(record, last_used_at=now)
 
 
 def _expiry_timestamp(expires_in_days: int | None) -> str | None:
@@ -227,4 +244,6 @@ def _record_from_row(row) -> ApiKeyRecord:
         created_at=row[6],
         last_used_at=row[7],
         expires_at=row[8],
+        scopes=row[9] or DEFAULT_SCOPES,
+        created_by=row[10],
     )

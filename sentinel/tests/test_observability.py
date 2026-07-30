@@ -45,5 +45,51 @@ class HealthEndpointTests(unittest.TestCase):
         self.assertEqual(response.headers.get("X-Request-ID"), "caller-trace-42")
 
 
+class MetricsEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        base = Path(self.tmpdir.name)
+        self.db_path = base / "audit.sqlite"
+        self.client = TestClient(
+            create_app(db_path=self.db_path, upload_dir=base / "uploads", admin_token="admin-secret")
+        )
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_metrics_requires_admin_token(self):
+        self.assertEqual(self.client.get("/metrics").status_code, 401)
+        self.assertEqual(
+            self.client.get("/metrics", headers={"Authorization": "Bearer wrong"}).status_code, 401
+        )
+
+    def test_metrics_reports_counters(self):
+        from sentinel.models import Case, Verdict
+        from sentinel.tools.audit_log import write_audit
+        from sentinel.tools.ticketing import create_human_ticket
+
+        verdict = Verdict(
+            case_id="m-1",
+            decision="reject",
+            severity_tier=3,
+            category="Spam",
+            policy_clause="INT-SPAM-001 (Integrity / Spam)",
+            confidence=0.9,
+            rationale="spam",
+            reviewer="specialist",
+        )
+        write_audit(verdict, self.db_path)
+        create_human_ticket(Case(id="m-2", asset_type="text", asset_path="", metadata={}), 2, "Spam", self.db_path)
+
+        payload = self.client.get("/metrics", headers={"Authorization": "Bearer admin-secret"}).json()
+
+        self.assertEqual(payload["audits"]["total"], 1)
+        self.assertEqual(payload["audits"]["by_decision"]["reject"], 1)
+        self.assertEqual(payload["tickets"]["open"], 1)
+        self.assertIn("uptime_seconds", payload)
+        self.assertIn("daily_budget", payload)
+        self.assertEqual(payload["verdict_cache_entries"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

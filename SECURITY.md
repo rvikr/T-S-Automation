@@ -25,8 +25,13 @@ you deploy this, you own these:
 - **Secrets management.** Credentials are read from the environment (`.env`
   locally). Use a real secrets manager in production; do not bake keys into an
   image.
-- **Backups and replication.** State lives in a single-node SQLite file and a
-  local ChromaDB directory. Neither is replicated.
+- **Replication and offsite backup storage.** State lives in a single-node
+  SQLite file and a local ChromaDB directory; neither is replicated. A backup
+  tool ships (`python -m sentinel.tools.backup`, online-backup API + rotation,
+  runnable as a compose sidecar), but the operator owns scheduling it and
+  copying snapshots somewhere off the host. ChromaDB is intentionally not
+  backed up — both indexes are derived data, rebuildable from SQLite and the
+  policy corpus.
 
 ## What the application does handle
 
@@ -35,8 +40,19 @@ you deploy this, you own these:
   returned exactly once, at creation. Salting is intentionally omitted: for a
   high-entropy random secret it adds nothing against brute force, unlike for
   passwords.
-- **Admin routes fail closed.** If `SENTINEL_ADMIN_TOKEN` is unset, key
+- **Admin routes fail closed.** If no admin token is configured, key
   management returns 503 rather than running unauthenticated.
+- **Key scopes, expiry, and rotation.** Keys carry scopes (`moderate`, `logs`)
+  enforced per route — a `logs`-only key cannot submit cases. `expires_in_days`
+  is checked at authentication and fails closed on an unparseable timestamp.
+  `POST /admin/api-keys/{id}/rotate` revokes and re-mints in one step, carrying
+  scopes over unchanged so rotation never silently widens access.
+- **Attributable admin actions.** `SENTINEL_ADMIN_TOKENS` ("name:token" pairs)
+  identifies the acting admin; mints record `created_by` and every admin action
+  is logged under that name.
+- **Encryption at rest for quarantine.** With `SENTINEL_ENCRYPTION_KEY` set,
+  assets are Fernet-encrypted on entry to quarantine and the plaintext source
+  is removed; a malformed key raises rather than silently storing plaintext.
 - **Tenant isolation** on moderation logs is enforced in the query layer and
   covered by tests.
 - **Upload ceiling.** Payloads above `SENTINEL_MAX_UPLOAD_BYTES` (25 MB default)
@@ -68,16 +84,17 @@ the reference implementation for a hardened one:
 - **`hash_match.py` is a stand-in.** It matches on case metadata labels, not a
   real perceptual-hash corpus. It is an integration seam for PhotoDNA/PDQ, and
   provides **no actual known-content detection** as written.
-- **No key scopes.** Keys support expiry (`expires_in_days`, enforced at
-  authentication and failing closed on unparseable timestamps) and one-step
-  rotation (`POST /admin/api-keys/{id}/rotate`), but every key still grants the
-  full moderation surface — there are no per-route or read-only scopes.
-- **Retention requires scheduling; no encryption at rest.** A purge job exists
-  (`python -m sentinel.tools.retention`) for uploads, quarantine files, and
-  verdict-cache rows, but nothing runs it automatically — the operator must
-  schedule it. Stored content and audit rationales are not encrypted at rest.
-- **No RBAC.** A single shared admin token means admin actions are not
-  attributable to an individual.
+- **Coarse scopes; no true RBAC.** Scopes are per-route grants
+  (`moderate`, `logs`), not roles: any admin token can do anything on
+  `/admin/*`, and there is no per-tenant admin delegation. Named tokens give
+  attribution, not authorization boundaries.
+- **Retention and backups require scheduling.** Both tools ship and both run as
+  compose sidecars under the `ops` profile, but a bare `docker compose up` does
+  not start them — the operator must opt in.
+- **Encryption at rest covers quarantine only.** Uploads stay readable while
+  the pipeline analyses them, and audit rationales — which contain
+  model-generated descriptions of flagged content — live unencrypted in SQLite,
+  where field-level encryption would break querying.
 - **The injection screen is a first-line filter, not a defense.** Normalization
   (NFKC, zero-width stripping, leetspeak folding) closes the cheap evasions,
   but semantic rephrasings and non-English injection pass it; the model's own
