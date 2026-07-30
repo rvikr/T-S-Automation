@@ -13,9 +13,13 @@ application** and assumed to be provided by the surrounding infrastructure. If
 you deploy this, you own these:
 
 - **TLS termination.** The app speaks plain HTTP; run it behind a reverse proxy.
-- **Rate limiting and DDoS protection.** There is no in-process rate limiter.
-  A single static admin token with unlimited attempts is brute-forceable without
-  a gateway in front of it.
+- **DDoS protection and cross-worker rate limiting.** The API has an in-process
+  per-client-IP limiter (defaults: 120 req/min, 30 req/min on `/admin/*` to slow
+  admin-token brute force), but it is per-process memory only: it does not
+  coordinate across workers or nodes and is not DDoS protection. It also keys on
+  the direct peer address and deliberately ignores `X-Forwarded-For` (trivially
+  spoofable), so behind a reverse proxy the per-client limiting must happen at
+  the proxy.
 - **CORS.** No CORS middleware is configured; the API is intended for
   server-to-server use, not direct browser access.
 - **Secrets management.** Credentials are read from the environment (`.env`
@@ -40,6 +44,21 @@ you deploy this, you own these:
 - **SQL injection.** All queries are parameterized.
 - **Path traversal.** Upload and quarantine filenames are normalized to a
   basename before use.
+- **In-process rate limiting.** Per-client-IP fixed-window limits on all API
+  routes, with a stricter bucket on `/admin/*` (see deployment assumptions
+  above for its limits).
+- **Webhook SSRF guard.** Caller-supplied `callback_url` targets are refused
+  unless their host is on the operator's `SENTINEL_WEBHOOK_ALLOWED_HOSTS`
+  allowlist; redirects are never followed; deliveries can be HMAC-signed via
+  `SENTINEL_WEBHOOK_SECRET`.
+- **UI cost controls.** The Streamlit tab that triggers paid model calls can be
+  password-gated (`SENTINEL_UI_PASSWORD`, constant-time comparison) and is
+  capped per session (`SENTINEL_UI_MAX_LIVE_RUNS`, default 25; malformed
+  values fall back to the default, never to unlimited).
+- **Custom policy validation.** `SENTINEL_POLICY_FILE` taxonomies are strictly
+  validated and the service refuses to start on a malformed file — enforcing
+  under a policy other than the one the operator configured is treated as
+  worse than not starting.
 
 ## Known limitations
 

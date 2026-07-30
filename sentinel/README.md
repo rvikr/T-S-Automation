@@ -37,9 +37,9 @@ Key modules:
 - `sentinel/agents/orchestrator.py` — deterministic rails: modality dispatch, Tier-1 guardrail, injection routing, guaranteed senior review, ticketing, quarantine, audit, per-case OpenAI trace + latency.
 - `sentinel/agents/live_events.py` — in-process event sink streaming agent progress to the UI mid-run.
 - `sentinel/guardrails.py` — the Tier-1 output guardrail and the prompt-injection input guardrail (SDK tripwires + deterministic checks).
-- `sentinel/tools/` — policy retrieval (semantic + keyword fallback), policy index builder, precedent memory, hash matching, Jira client, ticketing, audit log, API keys.
+- `sentinel/tools/` — policy retrieval (semantic + keyword fallback, plus bring-your-own-policy loading), policy index builder, precedent memory, hash matching, Jira client, ticketing + human resolution, verdict cache, signed webhooks, rate limiting, audit log, API keys.
 - `sentinel/eval/run_eval.py` — golden-set evaluation harness.
-- `sentinel/api.py` — FastAPI surface; `sentinel/app.py` — Streamlit demo UI; `sentinel/main.py` — CLI.
+- `sentinel/api.py` — FastAPI surface; `sentinel/app.py` — Streamlit UI (moderation, review queue, logs, metrics); `sentinel/main.py` — CLI.
 
 ## Setup
 
@@ -80,6 +80,23 @@ JIRA_PROJECT_KEY=MOD
 
 Escalated cases then open real Jira issues (priority from severity tier, policy citation, rationale, labels). If Jira is unreachable the local ticket still exists — an escalation is never lost.
 
+### Production controls (all optional, all in `.env.example`)
+
+- **UI protection** — `SENTINEL_UI_PASSWORD` gates the live-agent tab (paid model calls) behind a password; `SENTINEL_UI_MAX_LIVE_RUNS` caps live runs per session (default 25). Set the password before deploying the UI publicly.
+- **API rate limiting** — per-client-IP fixed-window limits: `SENTINEL_RATE_LIMIT_PER_MINUTE` (default 120) and a stricter `SENTINEL_ADMIN_RATE_LIMIT_PER_MINUTE` (default 30) on `/admin/*` to slow admin-token brute force. In-process only — multi-worker deployments still need a gateway limiter.
+- **Bring your own policy** — point `SENTINEL_POLICY_FILE` at a YAML/JSON taxonomy (schema: `sentinel/policy/policy.example.yaml`). Tier-1 treatment is derived from tiers, so your tier-1 clauses get the same never-adjudicated-by-AI rails. Malformed files refuse to start rather than enforce the wrong policy.
+- **Verdict webhooks** — pass `callback_url` on a moderation request to have the full result POSTed back. Fails closed: the host must be on `SENTINEL_WEBHOOK_ALLOWED_HOSTS` (SSRF guard), and `SENTINEL_WEBHOOK_SECRET` adds an `X-Sentinel-Signature` HMAC.
+- **Verdict cache** — `SENTINEL_VERDICT_CACHE=1` reuses **allow** verdicts for byte-identical production uploads at zero agent cost. Only allows are cached; enforcement and escalation always re-run.
+- **Observability** — `GET /health` reports version, database reachability (503 when down), and configuration booleans; every response carries an `X-Request-ID` (inbound IDs are echoed). Install `sentry-sdk` and set `SENTRY_DSN` for error tracking.
+
+### Run with Docker
+
+```powershell
+docker compose up --build   # API on :8000, Streamlit UI on :8501
+```
+
+State persists in the `sentinel-db` / `sentinel-data` volumes; secrets are read from `.env.local` if present.
+
 ## Streamlit demo
 
 ```powershell
@@ -88,6 +105,7 @@ streamlit run sentinel/app.py
 ```
 
 - **Moderation** — upload an asset and watch the agents work **live**: tool calls, the specialist→senior handoff, and guardrail halts stream into the status panel as they happen. The verdict card shows clause citations, latency, token usage, the Jira link, and a direct link to the **OpenAI platform trace** for the run. A one-click **Tier-1 guardrail demo** button runs a committed stand-in through the live guardrail halt.
+- **Review queue** — the human half of the loop: open escalations with severity, category, and Jira links; a reviewer records a final allow/reject with a required rationale, which closes the ticket and lands in the audit log under the original moderation run.
 - **Logs** — tenant moderation logs with escalation details (`--seed-demo` populates curated rows).
 - **Metrics** — golden-set evaluation runs: accuracy, Tier-1 recall, benign false-positive rate, latency, per-modality breakdown, per-outcome P/R/F1, confusion matrix, misses. Two reference runs ship committed so the page has evidence on a fresh clone.
 
@@ -125,7 +143,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/moderation/cases" `
   -Body '{"case_id":"ZD-123","asset_type":"text","content":"content to moderate","source_system":"zendesk","external_reference":"ZD-123"}'
 ```
 
-The response carries the verdict, the enforcement action (`allow` / `reject` / `escalate`), the agent trace, a normalized `ticketing_payload` (Jira/ServiceNow/Zendesk/webhook), an `observability` block (OpenAI trace id + URL, latency, token usage), and — when Jira is configured and the case escalated — `integration.jira.key` / `url` for the created issue. `GET /moderation/logs` lists the tenant's decisions; `POST /admin/api-keys/{id}/revoke` kills a key instantly.
+The response carries the verdict, the enforcement action (`allow` / `reject` / `escalate`), the agent trace, a normalized `ticketing_payload` for downstream queues, an `observability` block (OpenAI trace id + URL, latency, token usage), and — when Jira is configured and the case escalated — `integration.jira.key` / `url` for the created issue. Add `callback_url` to the request to receive the same payload as a signed webhook (host must be allowlisted; see Production controls). `GET /moderation/logs` lists the tenant's decisions; `POST /admin/api-keys/{id}/revoke` kills a key instantly; `GET /health` is the deploy probe.
 
 ## CLI
 
@@ -140,7 +158,7 @@ python sentinel/main.py --case-id tier1-child-standin-001          # Tier-1 rout
 python -m pytest sentinel/tests -q
 ```
 
-123 tests, fully offline: acceptance flows, production-path mapping, API + key auth, Jira escalation (mocked transport), input-guardrail screening + routing, log formatting, UI helpers, plus the adversarial paths — asset-type spoofing, non-canonical category labels, model-call failures, and upload size limits. A conftest fixture scrubs `JIRA_*` and `OPENAI_API_KEY` from the environment so test runs can never open real issues, call the API, or export traces.
+206 tests, fully offline: acceptance flows, production-path mapping, a mocked SDK runtime pass (tripwires, usage accounting, fail-closed category handling), API + key auth, rate limiting, webhooks + SSRF guard, verdict cache, ticket resolution, policy-file validation, Jira escalation (mocked transport), input-guardrail screening + routing, UI access control, plus the adversarial paths — asset-type spoofing, non-canonical category labels, model-call failures, and upload size limits. A conftest fixture scrubs `JIRA_*` and `OPENAI_API_KEY` from the environment so test runs can never open real issues, call the API, or export traces. CI also gates on `ruff`, `mypy`, and `pip-audit` (configs in `pyproject.toml`).
 
 ## Demo script (3 minutes)
 

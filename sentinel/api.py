@@ -31,10 +31,18 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from sentinel.agents.orchestrator import run_case
-from sentinel.config import DEFAULT_DB_PATH, MAX_UPLOAD_BYTES, UPLOADS_DIR, load_settings
+from sentinel.config import (
+    ADMIN_RATE_LIMIT_PER_MINUTE,
+    DEFAULT_DB_PATH,
+    MAX_UPLOAD_BYTES,
+    RATE_LIMIT_PER_MINUTE,
+    UPLOADS_DIR,
+    load_settings,
+)
 from sentinel.models import ApiKeyRecord, Case, CaseResult, ModerationLog
 from sentinel.tools.api_keys import authenticate_api_key, create_api_key, list_api_keys, revoke_api_key
 from sentinel.tools.audit_log import init_db, list_moderation_logs
+from sentinel.tools.rate_limit import RateLimiter
 from sentinel.tools.webhook import deliver_webhook, validate_callback_url
 from sentinel.ui_uploads import openai_trace_url, safe_upload_name
 
@@ -213,12 +221,20 @@ def create_app(
     db_path: str | Path = DEFAULT_DB_PATH,
     upload_dir: str | Path = UPLOADS_DIR / "api",
     admin_token: str | None = None,
+    rate_limit_per_minute: int | None = None,
+    admin_rate_limit_per_minute: int | None = None,
 ) -> FastAPI:
     resolved_db_path = Path(db_path)
     resolved_upload_dir = Path(upload_dir)
     resolved_admin_token = admin_token if admin_token is not None else os.getenv("SENTINEL_ADMIN_TOKEN")
     init_db(resolved_db_path)
     _init_error_tracking()
+    global_limiter = RateLimiter(
+        RATE_LIMIT_PER_MINUTE if rate_limit_per_minute is None else rate_limit_per_minute
+    )
+    admin_limiter = RateLimiter(
+        ADMIN_RATE_LIMIT_PER_MINUTE if admin_rate_limit_per_minute is None else admin_rate_limit_per_minute
+    )
 
     app = FastAPI(
         title="Sentinel Autonomous Moderation API",
@@ -228,6 +244,32 @@ def create_app(
             "integration with Jira or in-house queues."
         ),
     )
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        """Per-client fixed-window limits; the admin routes get a stricter bucket.
+
+        Keyed on the direct peer address only — see rate_limit.py for why
+        X-Forwarded-For is deliberately not honoured.
+        """
+        from fastapi.responses import JSONResponse
+
+        client_key = request.client.host if request.client else "unknown"
+        limiter = admin_limiter if request.url.path.startswith("/admin") else global_limiter
+        allowed, retry_after = limiter.check(client_key)
+        if not allowed:
+            logger.warning(
+                "Rate limit exceeded: client=%s path=%s (limit=%s/min)",
+                client_key,
+                request.url.path,
+                limiter.limit,
+            )
+            return JSONResponse(
+                {"detail": "Rate limit exceeded. Retry later."},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):

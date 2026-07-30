@@ -65,6 +65,12 @@ SQLITE_BUSY_TIMEOUT: float = float(os.getenv("SENTINEL_SQLITE_BUSY_TIMEOUT", "30
 # the request that triggered it.
 WEBHOOK_TIMEOUT_SECONDS: float = float(os.getenv("SENTINEL_WEBHOOK_TIMEOUT", "5"))
 
+# Per-client-IP request ceilings (fixed one-minute windows, in-process; 0
+# disables). The admin bucket is stricter because those routes gate on a single
+# static bearer token, which unlimited attempts would let an attacker grind at.
+RATE_LIMIT_PER_MINUTE: int = int(os.getenv("SENTINEL_RATE_LIMIT_PER_MINUTE", "120"))
+ADMIN_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("SENTINEL_ADMIN_RATE_LIMIT_PER_MINUTE", "30"))
+
 # When no model adjudicates a production upload (no credentials, or the call
 # failed) every case fails closed to an escalation — so mirroring those to Jira
 # opens one real issue per request for verdicts nobody produced. Off by default;

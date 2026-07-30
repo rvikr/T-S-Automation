@@ -64,7 +64,11 @@ python sentinel/main.py --reset-db --seed-demo
 streamlit run sentinel/app.py
 ```
 
-123 offline tests (`python -m pytest`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues. CI runs them on every push and asserts the Tier-1 recall and benign false-positive invariants against the offline golden set.
+Or containerized: `docker compose up --build` (API on :8000, UI on :8501).
+
+206 offline tests (`python -m pytest`), fully hermetic — the suite scrubs `OPENAI_API_KEY` and `JIRA_*` so it can never call the API, export traces, or open real issues. CI runs them on every push, gates on `ruff` / `mypy` / `pip-audit`, and asserts the Tier-1 recall and benign false-positive invariants against the offline golden set.
+
+Beyond the demo, the service ships production controls (all opt-in via env, documented in `sentinel/.env.example`): a **human review queue** where reviewers resolve escalations into the audit trail, **bring-your-own-policy** taxonomies (`SENTINEL_POLICY_FILE` — tier-1 rails derived from your tiers, not hardcoded categories), **signed verdict webhooks** with an SSRF host-allowlist, per-IP **API rate limiting** with a stricter admin bucket, a password gate + run cap on the paid UI surface, an opt-in **allow-verdict cache** (only benign verdicts are ever cached), and `/health` + request-ID observability.
 
 ## Screenshots
 
