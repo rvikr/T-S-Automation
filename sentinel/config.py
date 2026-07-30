@@ -65,6 +65,10 @@ SQLITE_BUSY_TIMEOUT: float = float(os.getenv("SENTINEL_SQLITE_BUSY_TIMEOUT", "30
 # the request that triggered it.
 WEBHOOK_TIMEOUT_SECONDS: float = float(os.getenv("SENTINEL_WEBHOOK_TIMEOUT", "5"))
 
+# Extra delivery attempts after the first, for transient failures only
+# (network errors, 5xx, 429). Synchronous with backoff, so keep it small.
+WEBHOOK_RETRIES: int = int(os.getenv("SENTINEL_WEBHOOK_RETRIES", "2"))
+
 # Per-client-IP request ceilings (fixed one-minute windows, in-process; 0
 # disables). The admin bucket is stricter because those routes gate on a single
 # static bearer token, which unlimited attempts would let an attacker grind at.

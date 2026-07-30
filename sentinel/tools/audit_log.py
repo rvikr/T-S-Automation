@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_hash TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    last_used_at TEXT
+    last_used_at TEXT,
+    expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS precedents (
@@ -71,6 +72,11 @@ CREATE TABLE IF NOT EXISTS precedents (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS live_run_budget (
+    day TEXT PRIMARY KEY,
+    count INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS verdict_cache (
     content_hash TEXT NOT NULL,
     asset_type TEXT NOT NULL,
@@ -79,6 +85,7 @@ CREATE TABLE IF NOT EXISTS verdict_cache (
     confidence REAL NOT NULL,
     rationale TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    policy_fingerprint TEXT,
     PRIMARY KEY (content_hash, asset_type)
 );
 """
@@ -113,6 +120,11 @@ def init_db(db_path: str | Path) -> Path:
         _ensure_column(conn, "tickets", "run_id", "TEXT")
         _ensure_column(conn, "tickets", "external_key", "TEXT")
         _ensure_column(conn, "tickets", "external_url", "TEXT")
+        # Legacy cache rows have no fingerprint and therefore never match a
+        # lookup — exactly the invalidation we want for pre-fingerprint entries.
+        _ensure_column(conn, "verdict_cache", "policy_fingerprint", "TEXT")
+        # Legacy keys have NULL expiry, i.e. they never expire — unchanged behavior.
+        _ensure_column(conn, "api_keys", "expires_at", "TEXT")
     return path
 
 

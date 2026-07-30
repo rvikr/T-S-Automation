@@ -18,12 +18,13 @@ import hmac
 import json
 import logging
 import os
+import time
 from typing import Any
 from urllib.parse import urlparse
 
 import requests
 
-from sentinel.config import WEBHOOK_TIMEOUT_SECONDS
+from sentinel.config import WEBHOOK_RETRIES, WEBHOOK_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -64,30 +65,50 @@ def sign_payload(body: bytes, secret: str) -> str:
     return "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
 
+# Statuses worth retrying: rate limiting and server-side failures. Any other
+# non-2xx is the receiver rejecting the payload — retrying cannot fix that.
+_TRANSIENT_STATUSES = {429, 500, 502, 503, 504}
+
+
 def deliver_webhook(url: str, payload: dict[str, Any]) -> bool:
     """POST the payload to the (pre-validated) callback URL. Returns success.
 
-    Failure is logged and reported to the caller in the API response, but never
-    fails the moderation request itself — the verdict and audit row already
-    exist, and the caller can re-fetch via /moderation/logs.
+    Transient failures (network errors, 5xx, 429) are retried up to
+    ``SENTINEL_WEBHOOK_RETRIES`` times with exponential backoff; permanent
+    rejections (other 4xx) are not. Final failure is logged and reported in the
+    API response, but never fails the moderation request itself — the verdict
+    and audit row already exist, and the caller can re-fetch via
+    /moderation/logs.
     """
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     secret = os.getenv(WEBHOOK_SECRET_ENV, "").strip()
     if secret:
         headers[SIGNATURE_HEADER] = sign_payload(body, secret)
-    try:
-        response = requests.post(
-            url,
-            data=body,
-            headers=headers,
-            timeout=WEBHOOK_TIMEOUT_SECONDS,
-            allow_redirects=False,
-        )
-    except requests.RequestException:
-        logger.exception("Webhook delivery to %s failed", url)
+
+    attempts = 1 + max(0, WEBHOOK_RETRIES)
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(min(0.5 * (2 ** (attempt - 1)), 4.0))
+        try:
+            response = requests.post(
+                url,
+                data=body,
+                headers=headers,
+                timeout=WEBHOOK_TIMEOUT_SECONDS,
+                allow_redirects=False,
+            )
+        except requests.RequestException:
+            logger.warning("Webhook delivery to %s failed (attempt %d/%d)", url, attempt + 1, attempts, exc_info=True)
+            continue
+        if 200 <= response.status_code < 300:
+            return True
+        if response.status_code in _TRANSIENT_STATUSES:
+            logger.warning(
+                "Webhook delivery to %s returned %s (attempt %d/%d)", url, response.status_code, attempt + 1, attempts
+            )
+            continue
+        logger.warning("Webhook delivery to %s rejected with status %s; not retrying", url, response.status_code)
         return False
-    if not 200 <= response.status_code < 300:
-        logger.warning("Webhook delivery to %s returned status %s", url, response.status_code)
-        return False
-    return True
+    logger.error("Webhook delivery to %s failed after %d attempts", url, attempts)
+    return False

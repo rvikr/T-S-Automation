@@ -68,13 +68,21 @@ the reference implementation for a hardened one:
 - **`hash_match.py` is a stand-in.** It matches on case metadata labels, not a
   real perceptual-hash corpus. It is an integration seam for PhotoDNA/PDQ, and
   provides **no actual known-content detection** as written.
-- **No key expiry, scopes, or rotation.** `created_at` and `last_used_at` are
-  recorded but nothing acts on them.
-- **No data retention policy.** Audit rationales contain model-generated
-  descriptions of flagged content, and uploaded assets persist indefinitely with
-  no TTL, purge job, or encryption at rest.
+- **No key scopes.** Keys support expiry (`expires_in_days`, enforced at
+  authentication and failing closed on unparseable timestamps) and one-step
+  rotation (`POST /admin/api-keys/{id}/rotate`), but every key still grants the
+  full moderation surface — there are no per-route or read-only scopes.
+- **Retention requires scheduling; no encryption at rest.** A purge job exists
+  (`python -m sentinel.tools.retention`) for uploads, quarantine files, and
+  verdict-cache rows, but nothing runs it automatically — the operator must
+  schedule it. Stored content and audit rationales are not encrypted at rest.
 - **No RBAC.** A single shared admin token means admin actions are not
   attributable to an individual.
+- **The injection screen is a first-line filter, not a defense.** Normalization
+  (NFKC, zero-width stripping, leetspeak folding) closes the cheap evasions,
+  but semantic rephrasings and non-English injection pass it; the model's own
+  refusal behavior and the deterministic rails downstream are the real
+  backstop.
 
 ## Handling of illegal content
 

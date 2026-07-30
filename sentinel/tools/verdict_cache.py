@@ -13,6 +13,7 @@ operator makes it explicitly.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -26,6 +27,24 @@ logger = logging.getLogger(__name__)
 VERDICT_CACHE_ENV = "SENTINEL_VERDICT_CACHE"
 
 CACHE_REVIEWER = "cache"
+
+
+def policy_fingerprint() -> str:
+    """Stable digest of the active taxonomy's decision-relevant fields.
+
+    Stored with every cache entry and required to match on lookup, so an allow
+    granted under one policy can never be replayed under another — swapping
+    SENTINEL_POLICY_FILE (or editing tiers) invalidates the whole cache
+    implicitly. Summaries are included: they are what the agents reason from,
+    so a reworded clause is a different policy even at the same tier.
+    """
+    from sentinel.tools.policy_retrieval import POLICY_CLAUSES
+
+    material = ";".join(
+        f"{clause.category}|{clause.tier}|{clause.clause_id}|{clause.summary}"
+        for clause in sorted(POLICY_CLAUSES.values(), key=lambda clause: clause.category)
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 def cache_enabled() -> bool:
@@ -54,9 +73,9 @@ def lookup_allow_verdict(case: Case, db_path: str | Path) -> Verdict | None:
             """
             SELECT category, clause, confidence, rationale
             FROM verdict_cache
-            WHERE content_hash = ? AND asset_type = ?
+            WHERE content_hash = ? AND asset_type = ? AND policy_fingerprint = ?
             """,
-            (content_hash, case.asset_type),
+            (content_hash, case.asset_type, policy_fingerprint()),
         ).fetchone()
     if row is None:
         return None
@@ -90,9 +109,10 @@ def store_allow_verdict(case: Case, verdict: Verdict, db_path: str | Path) -> No
         conn.execute(
             """
             INSERT OR REPLACE INTO verdict_cache (
-                content_hash, asset_type, category, clause, confidence, rationale, created_at
+                content_hash, asset_type, category, clause, confidence, rationale,
+                created_at, policy_fingerprint
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 content_hash,
@@ -102,5 +122,6 @@ def store_allow_verdict(case: Case, verdict: Verdict, db_path: str | Path) -> No
                 float(verdict.confidence),
                 verdict.rationale,
                 utc_now(),
+                policy_fingerprint(),
             ),
         )

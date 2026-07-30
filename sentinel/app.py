@@ -75,18 +75,30 @@ def production_access_granted() -> bool:
 
 
 def _consume_live_run_budget() -> bool:
-    """Enforce the per-session cap on live runs; returns False when exhausted."""
+    """Enforce the session cap and the global daily budget on live runs.
+
+    The session cap is a soft brake (resets on refresh); the daily budget is
+    the hard ceiling, shared with the API and stored in SQLite.
+    """
+    from sentinel.tools.run_budget import consume_daily_budget
+
     cap = ui_live_run_cap()
-    if cap <= 0:
-        return True
     used = int(st.session_state.get("live_runs_used", 0))
-    if used >= cap:
+    if cap > 0 and used >= cap:
         st.error(
             f"This session reached its limit of {cap} live moderation runs. "
             "Refresh the page to start a new session, or raise SENTINEL_UI_MAX_LIVE_RUNS."
         )
         return False
-    st.session_state["live_runs_used"] = used + 1
+    allowed, used_today = consume_daily_budget(DEFAULT_DB_PATH)
+    if not allowed:
+        st.error(
+            f"The global daily moderation budget is exhausted ({used_today} runs today). "
+            "Raise SENTINEL_DAILY_LIVE_RUN_LIMIT or retry after UTC midnight."
+        )
+        return False
+    if cap > 0:
+        st.session_state["live_runs_used"] = used + 1
     return True
 
 

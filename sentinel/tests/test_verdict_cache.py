@@ -92,6 +92,19 @@ class VerdictCacheTests(unittest.TestCase):
         finally:
             self._env.start()
 
+    def test_policy_change_invalidates_cached_allows(self):
+        with patch("sentinel.tools.production_analysis.analyze_asset", return_value=_ALLOW):
+            run_case(self._case("a.txt", "hello world"), db_path=self.db_path)
+
+        # Same bytes, different active policy: the cached allow must not replay.
+        with (
+            patch("sentinel.tools.verdict_cache.policy_fingerprint", return_value="other-policy"),
+            patch("sentinel.tools.production_analysis.analyze_asset", return_value=_ALLOW) as analyze,
+        ):
+            run_case(self._case("b.txt", "hello world"), db_path=self.db_path)
+
+        analyze.assert_called_once()
+
     def test_synthetic_cases_never_use_the_cache(self):
         synthetic = Case(
             id="syn-1",

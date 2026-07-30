@@ -19,6 +19,7 @@ content while the rails guard the agents.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,11 +88,48 @@ class InjectionScreenResult:
     matched: str
 
 
+# Zero-width and word-joiner code points used to split trigger phrases so no
+# regex can span them ("ig<ZWSP>nore previous..."). Escapes, not literals —
+# invisible characters in source are unreviewable.
+_ZERO_WIDTH_RE = re.compile("[\u200b-\u200f\u2060\ufeff\u00ad]")
+
+# Leetspeak digit/symbol substitutions ("1gn0re pr3vious 1nstructions").
+# Folding applies to the *normalized copy only* — the raw text is always
+# screened too, so folding can add detections but never remove one.
+_LEET_FOLD = str.maketrans(
+    {
+        "0": "o",
+        "1": "i",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+        "$": "s",
+        "@": "a",
+        "!": "i",
+    }
+)
+
+
+def _normalize_for_screen(text: str) -> str:
+    """Fold the cheap evasions: compatibility forms, zero-width splits, leetspeak.
+
+    This is hardening for a regex screen, not a complete defense — semantic
+    rephrasings and non-English injection still pass and are left to the
+    model's own refusal behavior plus the deterministic rails downstream.
+    """
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = _ZERO_WIDTH_RE.sub("", normalized)
+    return normalized.translate(_LEET_FOLD)
+
+
 def check_prompt_injection(text: str) -> InjectionScreenResult:
-    for pattern in INJECTION_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            return InjectionScreenResult(triggered=True, matched=match.group(0))
+    candidates = (text, _normalize_for_screen(text))
+    for candidate in candidates:
+        for pattern in INJECTION_PATTERNS:
+            match = pattern.search(candidate)
+            if match:
+                return InjectionScreenResult(triggered=True, matched=match.group(0))
     return InjectionScreenResult(triggered=False, matched="")
 
 

@@ -40,9 +40,16 @@ from sentinel.config import (
     load_settings,
 )
 from sentinel.models import ApiKeyRecord, Case, CaseResult, ModerationLog
-from sentinel.tools.api_keys import authenticate_api_key, create_api_key, list_api_keys, revoke_api_key
+from sentinel.tools.api_keys import (
+    authenticate_api_key,
+    create_api_key,
+    list_api_keys,
+    revoke_api_key,
+    rotate_api_key,
+)
 from sentinel.tools.audit_log import init_db, list_moderation_logs
 from sentinel.tools.rate_limit import RateLimiter
+from sentinel.tools.run_budget import consume_daily_budget, seconds_until_utc_midnight
 from sentinel.tools.webhook import deliver_webhook, validate_callback_url
 from sentinel.ui_uploads import openai_trace_url, safe_upload_name
 
@@ -76,6 +83,12 @@ class CreateApiKeyRequest(BaseModel):
     tenant_name: str
     project_name: str
     environment: Literal["test", "live"] = "test"
+    # Omit for a non-expiring key (legacy behavior); set to auto-expire.
+    expires_in_days: int | None = Field(default=None, ge=1)
+
+
+class RotateApiKeyRequest(BaseModel):
+    expires_in_days: int | None = Field(default=None, ge=1)
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +140,25 @@ def _handle_create_key(
             tenant_name=request.tenant_name,
             project_name=request.project_name,
             environment=request.environment,
+            expires_in_days=request.expires_in_days,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _handle_rotate_key(
+    key_id: str,
+    request: RotateApiKeyRequest | None,
+    db_path: Path,
+    admin_token: str | None,
+    authorization: str | None,
+) -> dict:
+    _require_admin(authorization, admin_token)
+    expires_in_days = request.expires_in_days if request else None
+    replacement = rotate_api_key(db_path, key_id, expires_in_days=expires_in_days)
+    if replacement is None:
+        raise HTTPException(status_code=404, detail=f"No active API key to rotate: {key_id}")
+    return replacement
 
 
 def _handle_list_keys(db_path: Path, admin_token: str | None, authorization: str | None) -> dict:
@@ -153,8 +182,19 @@ def _handle_moderate_case(
     db_path: Path,
     upload_dir: Path,
     authorization: str | None,
+    daily_limit: int | None = None,
 ) -> dict:
     api_key = _require_api_key(authorization, db_path)
+    allowed, used = consume_daily_budget(db_path, limit=daily_limit)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Daily moderation budget exhausted ({used} runs today). "
+                "Raise SENTINEL_DAILY_LIVE_RUN_LIMIT or retry after UTC midnight."
+            ),
+            headers={"Retry-After": str(seconds_until_utc_midnight())},
+        )
     if request.callback_url:
         # Validate before running the case: rejecting a bad callback after the
         # (paid) moderation run would bill the caller for a result they asked
@@ -223,6 +263,7 @@ def create_app(
     admin_token: str | None = None,
     rate_limit_per_minute: int | None = None,
     admin_rate_limit_per_minute: int | None = None,
+    daily_live_run_limit: int | None = None,
 ) -> FastAPI:
     resolved_db_path = Path(db_path)
     resolved_upload_dir = Path(upload_dir)
@@ -316,9 +357,19 @@ def create_app(
     def revoke_key(key_id: str, authorization: str | None = Header(default=None)) -> dict:
         return _handle_revoke_key(key_id, resolved_db_path, resolved_admin_token, authorization)
 
+    @app.post("/admin/api-keys/{key_id}/rotate", status_code=201)
+    def rotate_key(
+        key_id: str,
+        request: RotateApiKeyRequest | None = None,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        return _handle_rotate_key(key_id, request, resolved_db_path, resolved_admin_token, authorization)
+
     @app.post("/moderation/cases", status_code=201)
     def moderate_case(request: ModerationRequest, authorization: str | None = Header(default=None)) -> dict:
-        return _handle_moderate_case(request, resolved_db_path, resolved_upload_dir, authorization)
+        return _handle_moderate_case(
+            request, resolved_db_path, resolved_upload_dir, authorization, daily_limit=daily_live_run_limit
+        )
 
     @app.get("/moderation/logs")
     def get_moderation_logs(

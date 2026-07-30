@@ -53,10 +53,33 @@ class DeliverWebhookTests(unittest.TestCase):
     def test_non_2xx_and_network_failure_report_false(self):
         import requests as requests_lib
 
-        with patch("sentinel.tools.webhook.requests.post", return_value=MagicMock(status_code=500)):
+        with patch("sentinel.tools.webhook.time.sleep"):
+            with patch("sentinel.tools.webhook.requests.post", return_value=MagicMock(status_code=500)):
+                self.assertFalse(deliver_webhook("https://hooks.example.com/x", {}))
+            with patch("sentinel.tools.webhook.requests.post", side_effect=requests_lib.ConnectionError):
+                self.assertFalse(deliver_webhook("https://hooks.example.com/x", {}))
+
+    def test_transient_failures_are_retried_until_success(self):
+        import requests as requests_lib
+
+        responses = [requests_lib.ConnectionError(), MagicMock(status_code=503), MagicMock(status_code=200)]
+        with (
+            patch("sentinel.tools.webhook.time.sleep") as sleep,
+            patch("sentinel.tools.webhook.requests.post", side_effect=responses) as post,
+        ):
+            self.assertTrue(deliver_webhook("https://hooks.example.com/x", {"case": "c1"}))
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_permanent_rejection_is_not_retried(self):
+        with (
+            patch("sentinel.tools.webhook.time.sleep") as sleep,
+            patch("sentinel.tools.webhook.requests.post", return_value=MagicMock(status_code=404)) as post,
+        ):
             self.assertFalse(deliver_webhook("https://hooks.example.com/x", {}))
-        with patch("sentinel.tools.webhook.requests.post", side_effect=requests_lib.ConnectionError):
-            self.assertFalse(deliver_webhook("https://hooks.example.com/x", {}))
+        # A 404 means the receiver rejected the payload; retrying cannot fix it.
+        self.assertEqual(post.call_count, 1)
+        sleep.assert_not_called()
 
     def test_signature_header_when_secret_configured(self):
         response = MagicMock(status_code=204)

@@ -198,6 +198,7 @@ class ApiKeyRecord:
     status: str
     created_at: str
     last_used_at: str | None = None
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True)
