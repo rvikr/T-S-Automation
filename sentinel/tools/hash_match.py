@@ -30,9 +30,41 @@ def file_sha256(asset_path: str | Path) -> str:
 def known_hash_match(asset_path: str | Path) -> bool:
     """Check the asset's SHA-256 against the local known-violation hash list.
 
-    This is the integration seam where a perceptual-hash service
-    (PhotoDNA/PDQ-style) would plug in; the local list keeps the flow
-    demonstrable without external dependencies.
+    This function is the integration seam for Tier-1 detection. It intentionally
+    has no external dependencies so the routing flow is demonstrable without
+    service registration or an API key. The three-level upgrade path is:
+
+    Short-term (no code change required):
+        Add real SHA-256 hex digests of known-violation files to
+        ``sentinel/data/known_hashes.txt``, one per line. Lines starting with
+        ``#`` are treated as comments; blank lines are ignored. The pipeline
+        already quarantines and tickets any asset whose hash matches.
+
+    Medium-term — PDQ perceptual hashing (free, open-source, no external service):
+        SHA-256 only catches exact byte-for-byte copies. Re-encoded, resized, or
+        slightly edited images evade it. To catch near-duplicates:
+        1. ``pip install pdqhash`` (Meta's open-source perceptual hash library).
+        2. Compute a PDQ hash alongside SHA-256: ``import pdqhash`` and call
+           ``pdqhash.compute(image_array)`` on the decoded image bytes.
+        3. Store PDQ hashes in ``known_hashes.txt`` with a ``pdq:`` prefix, e.g.
+           ``pdq:f8f8f0cee0f4a84f0696f14ee3d64c4f...``.
+        4. In this function, read lines with a ``pdq:`` prefix separately and
+           compare with Hamming distance ≤ 10 (PDQ's recommended threshold).
+        The function signature stays identical; only the comparison body changes.
+
+    Long-term — NCMEC / PhotoDNA (requires registration or subscription):
+        For a production platform handling real user-generated content, industry
+        standard is to submit image/video hashes to the NCMEC hash database.
+        Steps:
+        1. Register as an Electronic Service Provider (ESP) at
+           https://www.missingkids.org/gethelpnow/cybertipline — this is a legal
+           and compliance process, not a code problem.
+        2. Replace the local-list lookup in this function body with an HTTP call
+           to the NCMEC hash-check API. The function signature stays the same.
+        Alternative: Azure Content Safety (PhotoDNA-based) offers perceptual
+        image matching without ESP registration via an Azure subscription.
+        In both cases, the calling code in ``orchestrator.py`` and
+        ``hash_match_tool`` are unchanged — only this function body changes.
     """
     path = Path(asset_path)
     if not path.exists() or not KNOWN_HASHES_PATH.exists():

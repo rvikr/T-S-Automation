@@ -1,0 +1,12 @@
+# Sentinel known-violation hash list
+# Format: one SHA-256 hex digest per line (64 hex characters).
+# Lines starting with '#' are comments. Blank lines are ignored.
+# For PDQ perceptual hashes (medium-term), prefix the line with 'pdq:'.
+#
+# Example SHA-256 entry:
+#   e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+#
+# Example PDQ entry (not yet implemented — see known_hash_match() docstring):
+#   pdq:f8f8f0cee0f4a84f06...
+#
+# Add real hashes here when moving to production content.

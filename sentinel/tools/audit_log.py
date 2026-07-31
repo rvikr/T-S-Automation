@@ -326,6 +326,58 @@ def _escalation_details(audit: Audit, ticket: Ticket | None) -> tuple[str | None
     return None, {}
 
 
+def get_ticket(ticket_id: str, db_path: str | Path) -> Ticket | None:
+    """Return the :class:`Ticket` with the given *ticket_id*, or ``None`` if not found."""
+    init_db(db_path)
+    with db_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, case_id, severity, category, status, created_at, external_key, external_url
+            FROM tickets
+            WHERE id = ?
+            """,
+            (ticket_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return Ticket(
+        id=row[0],
+        case_id=row[1],
+        severity=row[2],
+        category=row[3],
+        status=row[4],
+        created_at=row[5],
+        external_key=row[6],
+        external_url=row[7],
+    )
+
+
+def get_ticket_by_external_key(external_key: str, db_path: str | Path) -> Ticket | None:
+    """Return the :class:`Ticket` with the given *external_key*, or ``None`` if not found."""
+    init_db(db_path)
+    with db_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, case_id, severity, category, status, created_at, external_key, external_url
+            FROM tickets
+            WHERE external_key = ?
+            """,
+            (external_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return Ticket(
+        id=row[0],
+        case_id=row[1],
+        severity=row[2],
+        category=row[3],
+        status=row[4],
+        created_at=row[5],
+        external_key=row[6],
+        external_url=row[7],
+    )
+
+
 def reset_db(db_path: str | Path) -> None:
     path = Path(db_path)
     if path.exists():

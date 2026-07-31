@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import hmac
+import json
 import logging
 import mimetypes
 import os
@@ -34,6 +36,9 @@ from sentinel.agents.orchestrator import run_case
 from sentinel.config import (
     ADMIN_RATE_LIMIT_PER_MINUTE,
     DEFAULT_DB_PATH,
+    EVAL_ACCURACY_FLOOR,
+    EVAL_RUNS_DIR,
+    JIRA_WEBHOOK_SECRET,
     MAX_UPLOAD_BYTES,
     RATE_LIMIT_PER_MINUTE,
     UPLOADS_DIR,
@@ -94,6 +99,17 @@ class CreateApiKeyRequest(BaseModel):
 
 class RotateApiKeyRequest(BaseModel):
     expires_in_days: int | None = Field(default=None, ge=1)
+
+
+class EvalRunRequest(BaseModel):
+    mode: str = "live"
+    live_all: bool = False
+
+
+class ResolveTicketRequest(BaseModel):
+    decision: Literal["allow", "reject"]
+    rationale: str
+    category: str
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +301,147 @@ def _handle_get_case_logs(case_id: str, db_path: Path, authorization: str | None
     return {"count": len(logs), "logs": [_log_payload(log) for log in logs]}
 
 
+def _handle_resolve_ticket(
+    ticket_id: str,
+    request: ResolveTicketRequest,
+    db_path: Path,
+    authorization: str | None,
+) -> dict:
+    _require_api_key(authorization, db_path, scope="moderate")
+    from sentinel.tools.ticketing import resolve_ticket_with_precedent
+
+    try:
+        resolve_ticket_with_precedent(ticket_id, request.decision, request.rationale, request.category, db_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "already resolved" in msg:
+            raise HTTPException(status_code=409, detail=msg) from exc
+        if "Tier-1" in msg:
+            raise HTTPException(status_code=403, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+    return {"ticket_id": ticket_id, "precedent_written": True, "decision": request.decision}
+
+
+def _handle_run_eval(
+    request: EvalRunRequest,
+    db_path: Path,
+    admin_tokens: dict[str, str],
+    authorization: str | None,
+) -> dict:
+    """Run the golden-set eval harness synchronously and return a summary.
+
+    Admin-only because eval runs real agent calls (live mode) and can be slow.
+    The route is not in the hot path so synchronous execution is acceptable.
+    """
+    _require_admin(authorization, admin_tokens)
+    from sentinel.eval.run_eval import compute_metrics, run_golden_set, write_report
+
+    live = request.mode == "live"
+    scores = run_golden_set(live=live, live_all=request.live_all)
+    metrics = compute_metrics(scores)
+    run_dir = write_report(scores, metrics, EVAL_RUNS_DIR, mode=request.mode)
+    accuracy = metrics.get("accuracy") or 0.0
+    below_floor = accuracy < EVAL_ACCURACY_FLOOR
+    if below_floor:
+        logger.warning(
+            "POST /admin/eval/run: accuracy %.1f%% is below floor %.1f%% — run_dir=%s",
+            accuracy * 100,
+            EVAL_ACCURACY_FLOOR * 100,
+            run_dir,
+        )
+    return {
+        "run_dir": str(run_dir),
+        "accuracy": accuracy,
+        "tier1_recall": metrics.get("tier1_recall"),
+        "benign_fpr": metrics.get("benign_false_positive_rate"),
+        "cases": metrics.get("cases"),
+        "below_floor": below_floor,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Jira webhook helpers and handler
+# ---------------------------------------------------------------------------
+
+def _verify_jira_signature(raw_body: bytes, signature_header: str | None, secret: str) -> bool:
+    """Return True when the signature is valid (or verification is disabled).
+
+    When *secret* is empty the check is skipped — dev mode. When set, the
+    expected header value is ``sha256=<hmac-sha256-hex>`` over the raw request
+    body, matching the format Jira uses for outgoing webhook secrets.
+    """
+    if not secret:
+        return True
+    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header or "")
+
+
+def _parse_jira_event(payload: dict) -> tuple[str | None, bool, str, str]:
+    """Extract ``(external_key, is_terminal, decision, rationale)`` from a Jira webhook payload.
+
+    *is_terminal* is True when the changelog contains a status transition to
+    ``"Done"`` or ``"Resolved"``.  *decision* is ``"allow"`` when the Jira
+    resolution is ``"Won't Do"`` or ``"Won't Fix"`` (the reviewer deemed the
+    content benign); all other resolutions map to ``"reject"``.
+    """
+    external_key: str | None = payload.get("issue", {}).get("key")
+
+    is_terminal = False
+    for item in payload.get("changelog", {}).get("items", []):
+        if item.get("field") == "status" and item.get("toString") in {"Done", "Resolved"}:
+            is_terminal = True
+            break
+
+    resolution = payload.get("issue", {}).get("fields", {}).get("resolution")
+    resolution_name: str | None = resolution.get("name") if resolution else None
+    if resolution_name in {"Won't Do", "Won't Fix"}:
+        decision = "allow"
+    else:
+        decision = "reject"
+    rationale = resolution_name if resolution_name else "Resolved in Jira"
+
+    return external_key, is_terminal, decision, rationale
+
+
+async def _handle_jira_webhook(request: Request, db_path: Path) -> dict:
+    """Receive a Jira outgoing webhook and close the feedback loop.
+
+    Does NOT require an API key — authentication is handled by optional
+    HMAC-SHA256 signature verification via the ``X-Hub-Signature`` header.
+    """
+    from fastapi.responses import JSONResponse
+
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    if not _verify_jira_signature(raw_body, request.headers.get("X-Hub-Signature"), JIRA_WEBHOOK_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    external_key, is_terminal, decision, rationale = _parse_jira_event(payload)
+
+    if external_key is None or not is_terminal:
+        return {"status": "skipped", "reason": "not a terminal transition"}
+
+    from sentinel.tools.audit_log import get_ticket_by_external_key
+    from sentinel.tools.ticketing import resolve_ticket_with_precedent
+
+    ticket = get_ticket_by_external_key(external_key, db_path)
+    if ticket is None:
+        return {"status": "skipped", "reason": "ticket not found"}
+
+    try:
+        resolve_ticket_with_precedent(ticket.id, decision, rationale, ticket.category, db_path)
+    except ValueError as exc:
+        return {"status": "skipped", "reason": str(exc)}
+
+    return {"status": "accepted", "ticket_id": ticket.id, "decision": decision}
+
+
 # ---------------------------------------------------------------------------
 # App factory — binds handlers to routes
 # ---------------------------------------------------------------------------
@@ -437,6 +594,30 @@ def create_app(
     @app.get("/moderation/logs/{case_id}")
     def get_case_logs(case_id: str, authorization: str | None = Header(default=None)) -> dict:
         return _handle_get_case_logs(case_id, resolved_db_path, authorization)
+
+    @app.post("/moderation/tickets/{ticket_id}/resolve")
+    def resolve_ticket_route(
+        ticket_id: str,
+        request: ResolveTicketRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        return _handle_resolve_ticket(ticket_id, request, resolved_db_path, authorization)
+
+    @app.post("/admin/eval/run")
+    def run_eval(
+        request: EvalRunRequest | None = None,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        return _handle_run_eval(
+            request or EvalRunRequest(),
+            resolved_db_path,
+            resolved_admin_tokens,
+            authorization,
+        )
+
+    @app.post("/webhooks/jira")
+    async def jira_webhook(request: Request) -> dict:
+        return await _handle_jira_webhook(request, resolved_db_path)
 
     return app
 

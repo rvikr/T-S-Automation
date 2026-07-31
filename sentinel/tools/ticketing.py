@@ -8,13 +8,15 @@ called from the review-queue UI, never from an agent.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from sentinel.models import Case, Ticket, Verdict
-from sentinel.tools.audit_log import db_connection, init_db, utc_now, write_audit
-from sentinel.tools.policy_retrieval import get_clause_for_category
+from sentinel.models import Case, Ticket, Verdict, build_verdict
+from sentinel.tools.audit_log import db_connection, get_ticket, init_db, utc_now, write_audit
+from sentinel.tools.policy_retrieval import TIER1_CATEGORIES, get_clause_for_category
+from sentinel.tools.precedent_memory import write_precedent
 
 
 def create_human_ticket(case: Case, severity: int, category: str, db_path: str | Path) -> Ticket:
@@ -126,6 +128,44 @@ def resolve_ticket(
         external_key=row[6],
         external_url=row[7],
     )
+
+
+def resolve_ticket_with_precedent(
+    ticket_id: str,
+    decision: str,
+    rationale: str,
+    category: str,
+    db_path: str | Path,
+) -> Ticket:
+    """Resolve a ticket via the API feedback loop: writes a precedent and returns the updated ticket.
+
+    Unlike :func:`resolve_ticket` (the UI-queue resolver), this function:
+    - Raises :exc:`KeyError` if the ticket does not exist.
+    - Raises :exc:`ValueError` if the ticket is already resolved.
+    - Refuses Tier-1 categories (raises :exc:`ValueError`).
+    - Calls :func:`write_precedent` so future agents can learn from the decision.
+    """
+    ticket = get_ticket(ticket_id, db_path)
+    if ticket is None:
+        raise KeyError(f"Ticket {ticket_id!r} not found")
+    if ticket.status == "resolved":
+        raise ValueError(f"Ticket {ticket_id!r} is already resolved")
+    if category in TIER1_CATEGORIES:
+        raise ValueError("Tier-1 tickets cannot be resolved via API")
+
+    case = Case(id=ticket.case_id, asset_type="unknown", asset_path="", metadata={})
+    verdict = build_verdict(
+        case_id=ticket.case_id,
+        decision=decision,
+        category=category,
+        confidence=1.0,
+        rationale=rationale,
+        reviewer="human",
+    )
+    write_precedent(case, verdict, db_path)
+    with db_connection(db_path) as conn:
+        conn.execute("UPDATE tickets SET status = 'resolved' WHERE id = ?", (ticket_id,))
+    return dataclasses.replace(ticket, status="resolved")
 
 
 def list_human_tickets(db_path: str | Path) -> list[Ticket]:

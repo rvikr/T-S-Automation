@@ -18,6 +18,7 @@ try:
 except FileNotFoundError:
     pass
 
+from sentinel.eval.scheduler import start_eval_scheduler
 from sentinel.agents import live_events
 from sentinel.agents.orchestrator import run_batch, run_case
 from sentinel.config import DEFAULT_DB_PATH, DEMO_SAMPLES_DIR, SYNTHETIC_CASES_DIR, load_settings
@@ -509,6 +510,7 @@ with st.expander("New here? How Sentinel works", expanded=False):
     )
 
 init_db(DEFAULT_DB_PATH)
+start_eval_scheduler()
 cases = load_synthetic_cases()
 case_by_label = {f"{case.id} - {case.metadata.get('expected_category')}": case for case in cases}
 

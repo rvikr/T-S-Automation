@@ -82,6 +82,17 @@ ADMIN_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("SENTINEL_ADMIN_RATE_LIMIT_PER_
 # escalation is never lost regardless of this setting.
 MIRROR_UNADJUDICATED_TO_JIRA: bool = os.getenv("SENTINEL_JIRA_MIRROR_UNADJUDICATED", "").strip() in {"1", "true", "yes"}
 
+# Accuracy floor for the nightly eval loop and the on-demand admin endpoint.
+# Runs whose accuracy falls below this value emit a WARNING log.
+EVAL_ACCURACY_FLOOR: float = float(os.getenv("SENTINEL_EVAL_ACCURACY_FLOOR", "0.88"))
+
+# UTC hour (0–23) at which the background eval loop fires each night.
+EVAL_SCHEDULE_HOUR: int = int(os.getenv("SENTINEL_EVAL_SCHEDULE_HOUR", "2"))
+
+# Shared secret used to verify incoming Jira webhook payloads (HMAC-SHA256).
+# When empty (the default), signature verification is skipped (dev mode).
+JIRA_WEBHOOK_SECRET: str = os.getenv("SENTINEL_JIRA_WEBHOOK_SECRET", "")
+
 
 @dataclass(frozen=True)
 class Settings:

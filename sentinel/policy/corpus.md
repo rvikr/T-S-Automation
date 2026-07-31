@@ -33,3 +33,18 @@ The machine-readable source of truth is `POLICY_CLAUSES` in `sentinel/tools/poli
 - `SEC-PII-001` Sharing Personal Info: Tier 3. Personal information labels are rejected.
 - `SEC-OPD-001` Off-Platform Directing: Tier 2. Unclear intent escalates.
 - `SEC-MIS-001` System Misuse: Tier 3. Abuse of systems or security boundaries is rejected.
+
+## Tier-1 Detection Seam
+
+Tier-1 categories (Child Exploitation; Terrorism & Violent Extremism) are never adjudicated by AI.
+All assets go directly to quarantine and a human review ticket. Detection happens in
+`sentinel/tools/hash_match.py` via `known_hash_match()`. The upgrade path for that function is:
+
+| Level | Approach | Dependencies |
+|---|---|---|
+| **Short-term** | Add SHA-256 hex digests to `sentinel/data/known_hashes.txt` (one per line, `#` = comment) | None — works today |
+| **Medium-term** | Add PDQ perceptual hash support (`pip install pdqhash`) to catch re-encoded near-duplicates; store with `pdq:` prefix in the hash list | Open-source, no external service |
+| **Long-term** | NCMEC ESP registration + hash-check API, or Azure Content Safety (PhotoDNA) for image matching | NCMEC: legal/compliance registration; Azure: subscription |
+
+The function signature of `known_hash_match(asset_path)` never changes — only its body is updated at each level.
+See the docstring in `sentinel/tools/hash_match.py` for full implementation notes.
