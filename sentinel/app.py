@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
+
+# Windows ProactorEventLoop raises "OSError: [WinError 6] The handle is invalid"
+# when the event loop tears down HTTP connections after Runner.run_sync() returns.
+# Switching to SelectorEventLoop suppresses this cosmetic noise without affecting
+# the SDK — Runner.run_sync() creates its own loop and is not affected by the
+# default policy.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 _this_dir = Path(__file__).resolve().parent
 sys.path[:] = [p for p in sys.path if Path(p).resolve() != _this_dir]
