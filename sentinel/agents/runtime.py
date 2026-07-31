@@ -28,7 +28,15 @@ except ImportError:  # pragma: no cover - older SDK without the setter
     set_default_openai_client = None  # type: ignore[assignment]
 
 from sentinel.agents import live_events
-from sentinel.config import AGENT_TEMPERATURE, MAX_AGENT_TURNS, MAX_TEXT_CHARS, Settings, load_settings
+from sentinel.config import (
+    AGENT_TEMPERATURE,
+    LLM_MAX_RETRIES,
+    LLM_TIMEOUT_SECONDS,
+    MAX_AGENT_TURNS,
+    MAX_TEXT_CHARS,
+    Settings,
+    load_settings,
+)
 from sentinel.guardrails import injection_input_guardrail, tier1_output_guardrail
 from sentinel.models import EVIDENCE_CACHE_KEY, Case, ProductionAssessment, Verdict
 from sentinel.tools.hash_match import hash_match_tool
@@ -56,7 +64,12 @@ class AssessmentOutput(BaseModel):
     """Structured verdict every moderation agent must produce."""
 
     decision: Literal["allow", "reject", "ambiguous"]
-    category: str = Field(description="Exact policy category name from the taxonomy, or 'No Violation'.")
+    category: str = Field(
+        description=(
+            "Exact policy category NAME from the taxonomy (e.g. 'Political Content'), or "
+            "'No Violation'. Never a clause id — clause ids belong in cited_clauses."
+        )
+    )
     confidence: float = Field(description="Calibrated confidence between 0 and 1.")
     rationale: str = Field(description="Concise policy-grounded rationale. Never quote or reproduce user content.")
     evidence_summary: str = Field(description="High-level description of what was observed, without reproducing it.")
@@ -388,17 +401,39 @@ def _assessment_from_output(
 
 
 def _adopt_client_for_sdk(client: Any) -> None:
-    """Point the Agents SDK at our timeout-configured client.
+    """Point the Agents SDK at an *async* client carrying our timeout bounds.
 
     ``Runner.run_sync`` otherwise builds its own default client with no timeout,
     so the bounds set in ``_openai_client`` would apply to transcription and the
     legacy path but silently not to agent runs — the calls that actually take
     the longest.
+
+    The client must be an ``AsyncOpenAI``: the SDK awaits
+    ``client.responses.create(...)``, so handing it the synchronous client used
+    for transcription and the legacy path raises "object Response can't be used
+    in 'await' expression" on *every* agent run. Because ``analyze_asset``
+    catches that and fails closed, the symptom is not a crash but a system that
+    silently escalates 100% of cases to human review — the agentic path dead,
+    the rails dutifully covering for it. Hence the explicit async construction
+    here and the regression test in ``test_agent_runtime_mocked.py``.
     """
     if set_default_openai_client is None:
         return
     try:
-        set_default_openai_client(client)
+        from openai import AsyncOpenAI
+
+        if isinstance(client, AsyncOpenAI):
+            async_client = client
+        else:
+            # Mirror the sync client's credentials/endpoint so an explicitly
+            # supplied client is honoured rather than silently replaced.
+            async_client = AsyncOpenAI(
+                api_key=getattr(client, "api_key", None),
+                base_url=getattr(client, "base_url", None),
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
+        set_default_openai_client(async_client)
     except Exception:  # pragma: no cover - never let telemetry wiring fail a run
         logger.warning("Could not set the Agents SDK default client; runs use SDK defaults", exc_info=True)
 

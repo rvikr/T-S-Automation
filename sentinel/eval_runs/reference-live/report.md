@@ -1,6 +1,6 @@
 # Sentinel golden-set evaluation (live)
 
-Generated: 20260709T051046Z — 18 cases
+Generated: 20260731T054539Z — 18 cases
 
 > Live mode scores the golden set's text cases (the image/audio/video entries are
 > labeled text placeholders); pass `--live-all` to force every modality through.
@@ -11,9 +11,9 @@ Generated: 20260709T051046Z — 18 cases
 - Tier-1 recall (must be 1.0): **100.0%**
 - Benign false-positive rate: **0.0%**
 - Escalation rate: **55.6%**
-- Latency per case: mean **7008 ms**, p95 **10185 ms**
-- Total tokens: **89,837**
-- Estimated cost: **$0.0361** total, **$0.0020** mean per case (published per-token rates)
+- Latency per case: mean **6846 ms**, p95 **12405 ms**
+- Total tokens: **92,426**
+- Estimated cost: **$0.0404** total, **$0.0022** mean per case (published per-token rates)
 
 ## Per-outcome precision / recall / F1
 
@@ -27,7 +27,7 @@ Generated: 20260709T051046Z — 18 cases
 
 | Modality | Cases | Accuracy | Escalation rate | Mean latency (ms) | p95 latency (ms) | Mean tokens |
 |---|---|---|---|---|---|---|
-| text | 18 | 88.9% | 55.6% | 7008 | 10185 | 4991 |
+| text | 18 | 88.9% | 55.6% | 6846 | 12405 | 5135 |
 
 ## Confusion matrix (rows = expected, columns = predicted)
 
@@ -42,4 +42,4 @@ Generated: 20260709T051046Z — 18 cases
 | Case | Category | Expected | Predicted | Final decision | Reviewer |
 |---|---|---|---|---|---|
 | txt-sexual-001 | Romantic/Sexual Content | reject | escalate | reject | senior |
-| txt-advertising-001 | Advertising | reject | escalate | ambiguous | senior |
+| txt-advertising-001 | Advertising | reject | escalate | reject | senior |

@@ -301,13 +301,26 @@ POLICY_CLAUSES, CATEGORY_ALIASES = _assemble_taxonomy()
 # never-adjudicated-by-AI treatment as the built-in ones.
 TIER1_CATEGORIES = {category for category, clause in POLICY_CLAUSES.items() if clause.tier == 1}
 
+# Agents are asked for a category *name* but also carry clause ids in
+# `cited_clauses`, and they sometimes answer with the id ("CIV-POL-001") or the
+# full citation ("CIV-POL-001 (Civility / Political Content)"). Either form
+# identifies a category unambiguously, so resolving it is strictly safer than
+# failing closed: the old behaviour turned a formatting slip into an
+# over-escalation, spending human review on a case the model had actually
+# decided. Derived from the active taxonomy, so custom policies work too.
+CLAUSE_ID_TO_CATEGORY: dict[str, str] = {
+    clause.clause_id.lower(): clause.category for clause in POLICY_CLAUSES.values()
+}
+
 
 def normalize_category(category: str) -> str | None:
     """Resolve a model-supplied category to a canonical taxonomy label.
 
-    Returns ``None`` when the label cannot be resolved, so callers can decide how
-    to fail — deliberately *not* defaulting to ``"No Violation"`` here, because a
-    silent downgrade to tier 0 is exactly the failure mode this guards against.
+    Accepts the canonical name, a known alias, a clause id, or a full citation
+    string. Returns ``None`` when the label cannot be resolved, so callers can
+    decide how to fail — deliberately *not* defaulting to ``"No Violation"``
+    here, because a silent downgrade to tier 0 is exactly the failure mode this
+    guards against.
     """
     if not category:
         return None
@@ -318,7 +331,12 @@ def normalize_category(category: str) -> str | None:
     for canonical in POLICY_CLAUSES:
         if canonical.lower() == key:
             return canonical
-    return CATEGORY_ALIASES.get(key)
+    alias_match = CATEGORY_ALIASES.get(key)
+    if alias_match:
+        return alias_match
+    # Clause id, bare or as the leading token of a full citation.
+    clause_key = key.split("(", 1)[0].strip()
+    return CLAUSE_ID_TO_CATEGORY.get(clause_key)
 
 
 def get_clause_for_category(category: str) -> PolicyClause:

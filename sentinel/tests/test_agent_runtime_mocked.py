@@ -144,6 +144,27 @@ class RunSpecialistCaseTests(unittest.TestCase):
         self.assertEqual(assessment.decision, "ambiguous")
         self.assertEqual(assessment.category, "No Violation")
 
+    def test_sdk_default_client_must_be_async(self):
+        """The SDK awaits ``client.responses.create``; a sync client breaks every run.
+
+        Handing ``set_default_openai_client`` the synchronous client raised
+        "object Response can't be used in 'await' expression" on every agent
+        run. ``analyze_asset`` catches that and fails closed, so the symptom
+        was not a crash but 100% of cases silently escalating to human review.
+        """
+        from openai import AsyncOpenAI, OpenAI
+
+        self._adopt.stop()  # exercise the real adopter for this test
+        try:
+            captured: list[object] = []
+            with patch.object(runtime, "set_default_openai_client", captured.append):
+                runtime._adopt_client_for_sdk(OpenAI(api_key="sk-test-not-used"))
+        finally:
+            self._adopt.start()
+
+        self.assertEqual(len(captured), 1)
+        self.assertIsInstance(captured[0], AsyncOpenAI)
+
     def test_empty_text_asset_short_circuits_without_calling_the_sdk(self):
         empty_case = _text_case(self.tmpdir.name + "", content="   ")
         with patch.object(runtime.Runner, "run_sync") as run_sync:

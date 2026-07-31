@@ -45,8 +45,9 @@ From the committed golden-set evaluation (`sentinel/eval_runs/reference-live/`, 
 
 - **Tier-1 recall: 100%** (the invariant — never missed, never adjudicated by AI)
 - **Benign false-positive rate: 0%**
-- **Outcome accuracy: 16/18 live text cases (88.9%)** against T&S-labeled outcomes — and both misses were *over-escalations to human review*, never under-enforcement
-- **$0.002 estimated cost per live text case** at published per-token rates, ~7 s mean latency — versus **$0.50–$2.00 and hours-to-days** for human-queue review
+- **Outcome accuracy: 16/18 live text cases (88.9%)** against T&S-labeled outcomes — and both misses were *over-escalations to the senior reviewer agent*, which then resolved them correctly without a human ticket. Zero under-enforcement.
+- **$0.0022 estimated cost per live text case** at published per-token rates, ~6.8 s mean / 12.4 s p95 latency — versus **$0.50–$2.00 and hours-to-days** for human-queue review
+- **4 of 18 cases reached a human** — the rest were resolved automatically, on rails
 
 Scope, stated plainly: the live run covers the 18 text cases, so 88.9% is a
 small-*n* figure whose value is the *direction* of its failures, not its

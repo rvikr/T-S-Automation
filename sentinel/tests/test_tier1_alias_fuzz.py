@@ -59,6 +59,32 @@ def test_extremism_phrasings_resolve_to_tier1(phrase):
     assert resolved in TIER1_CATEGORIES
 
 
+def test_clause_ids_resolve_to_their_category():
+    """A model answering with the clause id must not cost an over-escalation."""
+    from sentinel.tools.policy_retrieval import POLICY_CLAUSES
+
+    for category, clause in POLICY_CLAUSES.items():
+        assert normalize_category(clause.clause_id) == category
+        assert normalize_category(clause.clause_id.lower()) == category
+        # The full citation form the agents also emit.
+        assert normalize_category(clause.citation) == category
+
+
+def test_clause_id_for_a_tier1_clause_still_gets_the_rail():
+    verdict = build_verdict(
+        case_id="clause-id-1",
+        decision="reject",
+        category="SAF-CE-001",
+        confidence=0.7,
+        rationale="agent answered with the clause id",
+        reviewer="specialist",
+    )
+    assert verdict.category == "Child Exploitation"
+    assert verdict.severity_tier == 1
+    assert verdict.decision == "ambiguous"
+    assert verdict.confidence >= 0.95
+
+
 def test_every_alias_targets_an_existing_category():
     # An alias pointing outside the taxonomy would crash clause lookup the
     # moment a model used it.

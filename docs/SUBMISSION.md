@@ -28,9 +28,10 @@ An API-first, multimodal (text / image / audio / video) moderation platform:
 |---|---|
 | Tier-1 recall (the invariant) | **100%** |
 | Benign false-positive rate | **0%** |
-| Outcome accuracy (allow/reject/escalate) | **88.9%** — every miss an over-escalation to human review, zero under-enforcement |
-| Est. cost per live text case | **$0.002 mean** (vs $0.50–$2.00 human review) |
-| Latency per case | **7 s mean / 10 s p95** (vs hours–days in human queues) |
+| Outcome accuracy (allow/reject/escalate) | **88.9%** — every miss an over-escalation to the senior agent (resolved correctly, no human ticket), zero under-enforcement |
+| Cases reaching a human | **4 of 18** — the rest resolved automatically, on rails |
+| Est. cost per live text case | **$0.0022 mean** (vs $0.50–$2.00 human review) |
+| Latency per case | **6.8 s mean / 12.4 s p95** (vs hours–days in human queues) |
 
 Reference runs are committed under `sentinel/eval_runs/reference-*`; regenerate with `python -m sentinel.eval.run_eval [--live]`. 206 fully-offline tests keep the invariants pinned (`python -m pytest`), and CI asserts Tier-1 recall and the benign false-positive rate on every push, alongside `ruff`, `mypy`, and `pip-audit` gates.
 

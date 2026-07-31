@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -92,12 +93,23 @@ def score_case(case: Case, result: CaseResult) -> CaseScore:
     )
 
 
-def _live_case(case: Case) -> Case:
-    # Production mode must not see golden labels; the agent reads the asset itself.
+def _live_case(case: Case, asset_dir: Path) -> Case:
+    """Build the label-free production case the live agents actually see.
+
+    The asset is *copied* into ``asset_dir`` rather than referenced in place.
+    Escalated production cases are quarantined, and quarantine **moves** the
+    file — so pointing at the committed fixture makes measuring the system
+    delete the golden set, after which every later run reads empty assets,
+    escalates 100% of cases, and appears to score ~44%. Measuring must never
+    mutate what it measures.
+    """
+    source = Path(case.asset_path)
+    target = asset_dir / source.name
+    shutil.copy2(source, target)
     return Case(
         id=case.id,
         asset_type=case.asset_type,
-        asset_path=case.asset_path,
+        asset_path=str(target),
         metadata={"analysis_mode": "production"},
     )
 
@@ -108,9 +120,10 @@ def run_golden_set(live: bool = False, live_all: bool = False) -> list[CaseScore
     for golden in cases:
         if live and golden.asset_type != "text" and not live_all:
             continue
-        case = _live_case(golden) if live else golden
         with tempfile.TemporaryDirectory() as tmp:
-            result = run_case(case, db_path=Path(tmp) / "audit.sqlite")
+            tmp_path = Path(tmp)
+            case = _live_case(golden, tmp_path) if live else golden
+            result = run_case(case, db_path=tmp_path / "audit.sqlite")
         scores.append(score_case(golden, result))
     return scores
 

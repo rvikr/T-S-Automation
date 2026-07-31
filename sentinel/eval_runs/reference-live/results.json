@@ -1,6 +1,6 @@
 {
   "mode": "live",
-  "generated_at": "20260709T051046Z",
+  "generated_at": "20260731T054539Z",
   "metrics": {
     "cases": 18,
     "accuracy": 0.8889,
@@ -8,12 +8,12 @@
     "benign_false_positive_rate": 0.0,
     "escalation_rate": 0.5556,
     "latency_ms": {
-      "mean": 7008,
-      "p95": 10185
+      "mean": 6846,
+      "p95": 12405
     },
-    "total_tokens": 89837,
-    "est_cost_usd_total": 0.0361,
-    "est_cost_usd_mean": 0.002005,
+    "total_tokens": 92426,
+    "est_cost_usd_total": 0.0404,
+    "est_cost_usd_mean": 0.002245,
     "per_class": {
       "allow": {
         "support": 2,
@@ -56,9 +56,9 @@
         "cases": 18,
         "accuracy": 0.8889,
         "escalation_rate": 0.5556,
-        "mean_latency_ms": 7008,
-        "p95_latency_ms": 10185,
-        "mean_tokens": 4991
+        "mean_latency_ms": 6846,
+        "p95_latency_ms": 12405,
+        "mean_tokens": 5135
       }
     }
   },
@@ -74,9 +74,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": false,
-      "latency_ms": 9938,
-      "total_tokens": 6839,
-      "est_cost_usd": 0.001142
+      "latency_ms": 14529,
+      "total_tokens": 6913,
+      "est_cost_usd": 0.001148
     },
     {
       "case_id": "txt-harass-amb-001",
@@ -89,9 +89,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 6900,
-      "total_tokens": 6228,
-      "est_cost_usd": 0.001004
+      "latency_ms": 10052,
+      "total_tokens": 9587,
+      "est_cost_usd": 0.014033
     },
     {
       "case_id": "txt-spam-001",
@@ -104,9 +104,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 5356,
-      "total_tokens": 4588,
-      "est_cost_usd": 0.000746
+      "latency_ms": 5368,
+      "total_tokens": 4652,
+      "est_cost_usd": 0.000757
     },
     {
       "case_id": "txt-scam-001",
@@ -119,9 +119,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 4627,
-      "total_tokens": 3118,
-      "est_cost_usd": 0.000541
+      "latency_ms": 8215,
+      "total_tokens": 4724,
+      "est_cost_usd": 0.000777
     },
     {
       "case_id": "txt-pii-001",
@@ -134,9 +134,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 6543,
-      "total_tokens": 3110,
-      "est_cost_usd": 0.000533
+      "latency_ms": 3810,
+      "total_tokens": 3155,
+      "est_cost_usd": 0.000539
     },
     {
       "case_id": "txt-offplatform-amb-001",
@@ -146,12 +146,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "senior",
-      "ticket_id": "TKT-19E3667C",
+      "ticket_id": "TKT-0C1FA003",
       "quarantined": true,
       "correct": true,
-      "latency_ms": 9304,
-      "total_tokens": 7874,
-      "est_cost_usd": 0.010075
+      "latency_ms": 6530,
+      "total_tokens": 6343,
+      "est_cost_usd": 0.001022
     },
     {
       "case_id": "txt-selfharm-amb-001",
@@ -161,12 +161,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "senior",
-      "ticket_id": "TKT-A965CEC3",
+      "ticket_id": "TKT-DBB2E108",
       "quarantined": true,
       "correct": true,
-      "latency_ms": 10185,
-      "total_tokens": 6248,
-      "est_cost_usd": 0.001007
+      "latency_ms": 6670,
+      "total_tokens": 6381,
+      "est_cost_usd": 0.001035
     },
     {
       "case_id": "txt-regulated-001",
@@ -179,9 +179,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 6185,
-      "total_tokens": 4585,
-      "est_cost_usd": 0.000751
+      "latency_ms": 4801,
+      "total_tokens": 4647,
+      "est_cost_usd": 0.000759
     },
     {
       "case_id": "txt-sensitive-amb-001",
@@ -189,14 +189,14 @@
       "category": "Sensitive Events",
       "expected_outcome": "escalate",
       "predicted_outcome": "escalate",
-      "final_decision": "ambiguous",
+      "final_decision": "allow",
       "reviewer": "senior",
-      "ticket_id": "TKT-CB893F17",
-      "quarantined": true,
+      "ticket_id": null,
+      "quarantined": false,
       "correct": true,
-      "latency_ms": 7154,
-      "total_tokens": 4770,
-      "est_cost_usd": 0.0008
+      "latency_ms": 12405,
+      "total_tokens": 9671,
+      "est_cost_usd": 0.014324
     },
     {
       "case_id": "txt-benign-001",
@@ -209,9 +209,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 4791,
-      "total_tokens": 3068,
-      "est_cost_usd": 0.000516
+      "latency_ms": 4307,
+      "total_tokens": 3129,
+      "est_cost_usd": 0.000531
     },
     {
       "case_id": "txt-benign-002",
@@ -224,9 +224,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 4026,
-      "total_tokens": 3075,
-      "est_cost_usd": 0.000525
+      "latency_ms": 4144,
+      "total_tokens": 3133,
+      "est_cost_usd": 0.000532
     },
     {
       "case_id": "txt-harass-amb-002",
@@ -239,9 +239,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 8784,
-      "total_tokens": 8116,
-      "est_cost_usd": 0.001326
+      "latency_ms": 6852,
+      "total_tokens": 6373,
+      "est_cost_usd": 0.001032
     },
     {
       "case_id": "txt-political-amb-001",
@@ -251,12 +251,12 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "senior",
-      "ticket_id": "TKT-989936D7",
+      "ticket_id": "TKT-3F582730",
       "quarantined": true,
       "correct": true,
-      "latency_ms": 7687,
-      "total_tokens": 6244,
-      "est_cost_usd": 0.001006
+      "latency_ms": 6139,
+      "total_tokens": 6262,
+      "est_cost_usd": 0.001007
     },
     {
       "case_id": "txt-sensitive-amb-002",
@@ -269,9 +269,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 10742,
-      "total_tokens": 9459,
-      "est_cost_usd": 0.01402
+      "latency_ms": 6474,
+      "total_tokens": 6317,
+      "est_cost_usd": 0.00102
     },
     {
       "case_id": "txt-profanity-001",
@@ -284,9 +284,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 5411,
-      "total_tokens": 3087,
-      "est_cost_usd": 0.000527
+      "latency_ms": 6743,
+      "total_tokens": 3136,
+      "est_cost_usd": 0.000535
     },
     {
       "case_id": "txt-advertising-001",
@@ -294,14 +294,14 @@
       "category": "Advertising",
       "expected_outcome": "reject",
       "predicted_outcome": "escalate",
-      "final_decision": "ambiguous",
+      "final_decision": "reject",
       "reviewer": "senior",
-      "ticket_id": "TKT-737DD7C4",
-      "quarantined": true,
+      "ticket_id": null,
+      "quarantined": false,
       "correct": false,
-      "latency_ms": 8148,
-      "total_tokens": 6324,
-      "est_cost_usd": 0.001034
+      "latency_ms": 5855,
+      "total_tokens": 4845,
+      "est_cost_usd": 0.000814
     },
     {
       "case_id": "txt-misuse-001",
@@ -314,9 +314,9 @@
       "ticket_id": null,
       "quarantined": false,
       "correct": true,
-      "latency_ms": 4929,
-      "total_tokens": 3104,
-      "est_cost_usd": 0.000534
+      "latency_ms": 6898,
+      "total_tokens": 3158,
+      "est_cost_usd": 0.000548
     },
     {
       "case_id": "tier1-child-standin-002",
@@ -326,10 +326,10 @@
       "predicted_outcome": "escalate",
       "final_decision": "ambiguous",
       "reviewer": "human",
-      "ticket_id": "TKT-366482FC",
+      "ticket_id": "TKT-AC49A11F",
       "quarantined": true,
       "correct": true,
-      "latency_ms": 5425,
+      "latency_ms": 3441,
       "total_tokens": 0,
       "est_cost_usd": 0.0
     }
